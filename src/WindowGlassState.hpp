@@ -29,6 +29,7 @@ class CWindowGlassState {
   private:
     PHLWINDOWREF              m_window;
     SP<Render::IFramebuffer>  m_sampleFramebuffer;
+    SP<Render::IFramebuffer>  m_sharpFramebuffer;
     SP<Render::IFramebuffer>  m_surfaceTempFramebuffer;
     Vector2D                  m_samplePaddingRatio;
     bool                      m_hasCachedSample = false;

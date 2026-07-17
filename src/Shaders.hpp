@@ -18,8 +18,10 @@ precision highp float;
  *     the window boundary, creating natural color bleeding
  *
  * Rendering layers:
- * 1. Edge refraction via smooth outward direction + exponential proximity
- * 2. Chromatic aberration (per-channel refraction scale)
+ * 1. Edge refraction: rim samples *outward*, pulling in sharp content from
+ *    beyond the window boundary (via the padded sharp sample texture),
+ *    compressed by the exponential falloff - visible warping, not blurred mush
+ * 2. Chromatic aberration (per-channel refraction scale, on the sharp rim)
  * 3. Edge raw-texture blend for vivid color pickup
  * 4. Subtle center dome lens magnification
  * 5. Frosted tint (brightness boost + desaturation)
@@ -29,7 +31,8 @@ precision highp float;
  * 9. Inner shadow (bottom rim)
  */
 
-uniform sampler2D tex;
+uniform sampler2D tex;      // blurred padded background sample
+uniform sampler2D sharpTex; // unblurred full-res copy of the same region
 uniform vec2 fullSize;
 uniform float radius;
 uniform vec2 uvPadding;
@@ -72,6 +75,11 @@ vec2 toTexUV(vec2 wuv) {
 vec4 sampleBlurred(vec2 wuv) {
     vec2 tuv = toTexUV(wuv);
     return texture(tex, clamp(tuv, 0.001, 0.999));
+}
+
+vec4 sampleSharp(vec2 wuv) {
+    vec2 tuv = toTexUV(wuv);
+    return texture(sharpTex, clamp(tuv, 0.001, 0.999));
 }
 
 // ============================================================================
@@ -148,14 +156,16 @@ void main() {
 
     // ========================================
     // EDGE REFRACTION
-    // Offset sampling UV inward (toward center) at edges — like looking
-    // through the curved thick edge of a glass slab. This compresses
-    // and distorts what's already behind the window, without reaching
-    // beyond the window boundary.
+    // Offset sampling UV *outward* at edges — the curved bezel of a thick
+    // glass slab bends rays so the rim shows content from beyond the
+    // window boundary (reachable thanks to the sample's padding region),
+    // compressed by the exponential falloff: fragments nearer the edge
+    // reach farther out, so the displacement gradient squeezes the outside
+    // world into the rim band.
     // ========================================
     float refractionPx = refractionStrength * 50.0;
     float refractionMag = edgeProximity * refractionPx;
-    vec2 baseOffset = inwardDir * refractionMag / fullSize;
+    vec2 baseOffset = -inwardDir * refractionMag / fullSize;
 
     // ========================================
     // CHROMATIC ABERRATION — per-channel refraction scale
@@ -231,6 +241,27 @@ void main() {
     // COLOR TINT OVERLAY
     // ========================================
     color = mix(color, tintColor, tintAlpha);
+
+    // ========================================
+    // SHARP REFRACTED RIM
+    // The rim band shows the *unblurred* refracted background — warping a
+    // heavily blurred texture is invisible, so the visible "liquid" edge
+    // comes from sharp content. Blends from frosted interior to sharp rim.
+    // Applied after the frosted tint pipeline so the rim stays vivid, but
+    // before fresnel/specular so edge lighting sits on top of it.
+    // ========================================
+    if (refractionStrength > 0.001) {
+        vec3 sharpC;
+        if (chromaticAberration > 0.001) {
+            sharpC.r = sampleSharp(uvR).r;
+            sharpC.g = sampleSharp(uvG).g;
+            sharpC.b = sampleSharp(uvB).b;
+        } else {
+            sharpC = sampleSharp(uvG).rgb;
+        }
+        float rimMix = smoothstep(0.35, 0.9, edgeProximity);
+        color = mix(color, sharpC, rimMix);
+    }
 
     // ========================================
     // FRESNEL RIM GLOW (edge zone)

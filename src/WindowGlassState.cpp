@@ -168,7 +168,7 @@ void CWindowGlassState::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
         float blurStrength   = resolvePresetFloat(ctx, &SPresetValues::blurStrength, &SOverridableConfig::blurStrength);
         int downscale        = blurStrength >= GlassRenderer::BLUR_DOWNSCALE_THRESHOLD ? GlassRenderer::BLUR_DOWNSCALE_MAX : 1;
 
-        GlassRenderer::sampleBackground(m_sampleFramebuffer, source, transformBox, m_samplePaddingRatio, downscale);
+        GlassRenderer::sampleBackground(m_sampleFramebuffer, source, transformBox, m_samplePaddingRatio, downscale, &m_sharpFramebuffer);
 
         float blurRadius     = blurStrength * 12.0f / downscale;
         int blurIterations   = std::clamp(static_cast<int>(resolvePresetInt(ctx, &SPresetValues::blurIterations, &SOverridableConfig::blurIterations)), 1, 5);
@@ -293,5 +293,5 @@ void CWindowGlassState::compositeAndRestore(PHLMONITOR monitor, float alpha) {
     GlassRenderer::applyGlassEffect(m_sampleFramebuffer, target,
                                      rawBox, transformBox, alpha,
                                      cornerRadius, roundingPower, m_samplePaddingRatio, ctx,
-                                     &maskInfo);
+                                     &maskInfo, m_sharpFramebuffer);
 }

@@ -30,8 +30,13 @@ struct SMaskInfo {
     float    alphaThreshold = 0.001f;
 };
 
+// sharpFramebuffer, when non-null, receives a full-resolution unblurred copy
+// of the same padded region (always full-res, even when the blur sample is
+// downscaled) - the shader's refracted rim samples it so the edge warp shows
+// sharp content instead of invisibly displacing blur.
 void sampleBackground(SP<Render::IFramebuffer>& sampleFramebuffer, SP<Render::IFramebuffer> sourceFramebuffer,
-                       CBox box, Vector2D& outPaddingRatio, int downscale = 1);
+                       CBox box, Vector2D& outPaddingRatio, int downscale = 1,
+                       SP<Render::IFramebuffer>* sharpFramebuffer = nullptr);
 
 void blurBackground(SP<Render::IFramebuffer> sampleFramebuffer, float radius, int iterations,
                     GLuint callerFramebufferID, int viewportWidth, int viewportHeight);
@@ -43,6 +48,7 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
                        CBox& rawBox, CBox& transformedBox,
                        float alpha, float cornerRadius, float roundingPower,
                        const Vector2D& paddingRatio, const SResolveContext& resolveContext,
-                       const SMaskInfo* mask = nullptr);
+                       const SMaskInfo* mask = nullptr,
+                       SP<Render::IFramebuffer> sharpFramebuffer = nullptr);
 
 } // namespace GlassRenderer

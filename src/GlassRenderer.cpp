@@ -29,7 +29,8 @@ static void uploadThemeUniforms(const SResolveContext& ctx) {
 }
 
 void sampleBackground(SP<Render::IFramebuffer>& sampleFramebuffer, SP<Render::IFramebuffer> sourceFramebuffer,
-                       CBox box, Vector2D& outPaddingRatio, int downscale) {
+                       CBox box, Vector2D& outPaddingRatio, int downscale,
+                       SP<Render::IFramebuffer>* sharpFramebuffer) {
     if (!sourceFramebuffer)
         return;
     const int pad = SAMPLE_PADDING_PX;
@@ -90,6 +91,34 @@ void sampleBackground(SP<Render::IFramebuffer>& sampleFramebuffer, SP<Render::IF
     glBlitFramebuffer(srcX0, srcY0, srcX1, srcY1,
                       dstX0, dstY0, dstX1, dstY1,
                       GL_COLOR_BUFFER_BIT, GL_LINEAR);
+
+    // Unblurred full-res copy of the same region for the refracted rim.
+    // Deliberately not derived from the (possibly downscaled) blur sample -
+    // its whole point is staying sharp. Same clamped source region; the
+    // destination coords are the *unscaled* equivalents of the clamp
+    // adjustments above.
+    if (sharpFramebuffer) {
+        if (!*sharpFramebuffer)
+            *sharpFramebuffer = g_pHyprRenderer->createFB("hyprglass-sharp");
+
+        if ((*sharpFramebuffer)->m_size.x != fullWidth || (*sharpFramebuffer)->m_size.y != fullHeight)
+            (*sharpFramebuffer)->alloc(fullWidth, fullHeight, sourceFramebuffer->m_drmFormat);
+
+        int sharpDstX0 = srcX0 - (static_cast<int>(box.x) - pad);
+        int sharpDstY0 = srcY0 - (static_cast<int>(box.y) - pad);
+        int sharpDstX1 = sharpDstX0 + (srcX1 - srcX0);
+        int sharpDstY1 = sharpDstY0 + (srcY1 - srcY0);
+
+        glBindFramebuffer(GL_FRAMEBUFFER, fbId(*sharpFramebuffer));
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, fbId(sourceFramebuffer));
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbId(*sharpFramebuffer));
+        glBlitFramebuffer(srcX0, srcY0, srcX1, srcY1,
+                          sharpDstX0, sharpDstY0, sharpDstX1, sharpDstY1,
+                          GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    }
 }
 
 void blurBackground(SP<Render::IFramebuffer> sampleFramebuffer, float radius, int iterations,
@@ -150,7 +179,7 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
                        CBox& rawBox, CBox& transformedBox,
                        float alpha, float cornerRadius, float roundingPower,
                        const Vector2D& paddingRatio, const SResolveContext& resolveContext,
-                       const SMaskInfo* mask) {
+                       const SMaskInfo* mask, SP<Render::IFramebuffer> sharpFramebuffer) {
     if (!sampleFramebuffer || !targetFramebuffer)
         return;
 
@@ -190,10 +219,21 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
         glActiveTexture(GL_TEXTURE0);
     }
 
+    // Unblurred background copy for the refracted rim on texture unit 2.
+    // Fall back to the blurred sample if the caller has no sharp copy (the
+    // rim then just warps blur, the pre-sharp-rim behavior).
+    {
+        auto sharpTexture = sharpFramebuffer ? sharpFramebuffer->getTexture() : texture;
+        glActiveTexture(GL_TEXTURE2);
+        sharpTexture->bind();
+        glActiveTexture(GL_TEXTURE0);
+    }
+
     auto shader = g_pHyprOpenGL->useShader(shaderManager.glassShader);
 
     shader->setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, glMatrix.getMatrix());
     shader->setUniformInt(SHADER_TEX, 0);
+    glUniform1i(uniforms.sharpTex, 2);
 
     const auto fullSize = Vector2D(transformedBox.width, transformedBox.height);
     shader->setUniformFloat2(SHADER_FULL_SIZE,
