@@ -172,16 +172,24 @@ void CWindowGlassState::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
 
         float blurRadius     = blurStrength * 12.0f / downscale;
         int blurIterations   = std::clamp(static_cast<int>(resolvePresetInt(ctx, &SPresetValues::blurIterations, &SOverridableConfig::blurIterations)), 1, 5);
-        int viewportWidth    = static_cast<int>(monitor->m_transformedSize.x);
-        int viewportHeight   = static_cast<int>(monitor->m_transformedSize.y);
+        // Viewport must be restored to the monitor's *buffer* dimensions
+        // (m_pixelSize), matching core's begin()/beginSimple() setViewport calls.
+        // m_transformedSize has w/h swapped on 90°/270°-rotated monitors, which
+        // left the viewport wrong for the entire rest of the frame.
+        int viewportWidth    = static_cast<int>(monitor->m_pixelSize.x);
+        int viewportHeight   = static_cast<int>(monitor->m_pixelSize.y);
         GlassRenderer::blurBackground(m_sampleFramebuffer, blurRadius, blurIterations, dynamic_cast<Render::GL::CGLFramebuffer*>(source.get())->getFBID(), viewportWidth, viewportHeight);
 
         m_hasCachedSample     = true;
         m_lastSceneGeneration = currentGeneration;
     }
 
-    int monitorWidth  = static_cast<int>(monitor->m_transformedSize.x);
-    int monitorHeight = static_cast<int>(monitor->m_transformedSize.y);
+    // Buffer dimensions (m_pixelSize), NOT m_transformedSize: this FBO stands in
+    // for currentFB, and core allocates all monitor work buffers at m_pixelSize
+    // (CMonitor::resources()). On a rotated monitor the two differ (w/h swapped)
+    // and surfaces render into it with buffer-space coordinates.
+    int monitorWidth  = static_cast<int>(monitor->m_pixelSize.x);
+    int monitorHeight = static_cast<int>(monitor->m_pixelSize.y);
 
     // 16-bit float RGBA: on a 10-bit monitor (currentFormat XBGR2101010), forcing
     // ARGB8888 here quantized real window content to 8-bit on its way through this
@@ -269,8 +277,10 @@ void CWindowGlassState::compositeAndRestore(PHLMONITOR monitor, float alpha) {
     float cornerRadius  = window->rounding() * monitorScale + borderExpand;
     float roundingPower = window->roundingPower();
 
-    int monitorWidth  = static_cast<int>(monitor->m_transformedSize.x);
-    int monitorHeight = static_cast<int>(monitor->m_transformedSize.y);
+    // Buffer dimensions, matching the temp FBO's allocation and transformBox's
+    // buffer-space coordinates.
+    int monitorWidth  = static_cast<int>(monitor->m_pixelSize.x);
+    int monitorHeight = static_cast<int>(monitor->m_pixelSize.y);
 
     GlassRenderer::SMaskInfo maskInfo{
         .textureId      = m_surfaceTempFramebuffer->getTexture()->m_texID,

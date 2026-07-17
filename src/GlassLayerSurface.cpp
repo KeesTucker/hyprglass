@@ -163,8 +163,10 @@ void CGlassLayerSurface::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
 
         float blurRadius     = blurStrength * 12.0f / downscale;
         int blurIterations   = std::clamp(static_cast<int>(resolvePresetInt(ctx, &SPresetValues::blurIterations, &SOverridableConfig::blurIterations)), 1, 5);
-        int viewportWidth    = static_cast<int>(g_pHyprRenderer->m_renderData.pMonitor->m_transformedSize.x);
-        int viewportHeight   = static_cast<int>(g_pHyprRenderer->m_renderData.pMonitor->m_transformedSize.y);
+        // Buffer dimensions (m_pixelSize), matching core's setViewport at render
+        // begin - m_transformedSize is w/h-swapped on rotated monitors.
+        int viewportWidth    = static_cast<int>(g_pHyprRenderer->m_renderData.pMonitor->m_pixelSize.x);
+        int viewportHeight   = static_cast<int>(g_pHyprRenderer->m_renderData.pMonitor->m_pixelSize.y);
         GlassRenderer::blurBackground(m_sampleFramebuffer, blurRadius, blurIterations, dynamic_cast<Render::GL::CGLFramebuffer*>(source.get())->getFBID(), viewportWidth, viewportHeight);
 
         m_hasCachedSample      = true;
@@ -175,8 +177,11 @@ void CGlassLayerSurface::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
     // Redirect surface rendering to a temp FBO cleared to transparent.
     // The original renderLayer (called between pre/post elements) will render
     // the surface into this FBO. compositeAndRestore uses its alpha as a mask.
-    int monitorWidth  = static_cast<int>(monitor->m_transformedSize.x);
-    int monitorHeight = static_cast<int>(monitor->m_transformedSize.y);
+    // Buffer dimensions (m_pixelSize), NOT m_transformedSize: this FBO stands in
+    // for currentFB, which core allocates at m_pixelSize. The two differ (w/h
+    // swapped) on rotated monitors.
+    int monitorWidth  = static_cast<int>(monitor->m_pixelSize.x);
+    int monitorHeight = static_cast<int>(monitor->m_pixelSize.y);
 
     // 16-bit float RGBA for the temp FBO: the mask shader needs alpha precision,
     // and monitor FBOs use XRGB formats (no usable alpha). ARGB8888 used to be
@@ -256,8 +261,10 @@ void CGlassLayerSurface::compositeAndRestore(PHLMONITOR monitor, float alpha) {
     // Use the temp FBO's rendered alpha as a mask: glass only where the surface
     // has visible content (alpha > 0). The temp FBO is in monitor coordinates,
     // so we map from the glass quad UV to monitor UV.
-    int monitorWidth  = static_cast<int>(monitor->m_transformedSize.x);
-    int monitorHeight = static_cast<int>(monitor->m_transformedSize.y);
+    // Buffer dimensions, matching the temp FBO's allocation and transformBox's
+    // buffer-space coordinates.
+    int monitorWidth  = static_cast<int>(monitor->m_pixelSize.x);
+    int monitorHeight = static_cast<int>(monitor->m_pixelSize.y);
 
     float maskThreshold = 0.001f;
     auto threshIt = g_pGlobalState->layerNamespaceMaskThresholds.find(layerSurface->m_namespace);
