@@ -133,41 +133,28 @@ void CGlassLayerSurface::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
 
     CBox transformBox = transformedLayerBox(*layerBox, monitor);
 
-    // Decide whether we need to re-sample and re-blur the background.
-    // When only the layer surface content changed (e.g. waybar clock tick)
-    // but no window moved behind us, we reuse the cached blurred background.
-    // This skips the most expensive GPU work (blit + 6 blur passes).
-    const uint64_t currentGeneration = g_pGlobalState->getSceneGeneration(monitor.get());
-    const auto activeWs = monitor->m_activeWorkspace;
-    const bool isAnimating = layerSurface->m_realPosition->isBeingAnimated() ||
-                             layerSurface->m_realSize->isBeingAnimated() ||
-                             layerSurface->m_alpha->isBeingAnimated() ||
-                             (activeWs && activeWs->m_renderOffset->isBeingAnimated());
-    const bool backgroundChanged = !m_hasCachedSample ||
-                                   currentGeneration != m_lastSceneGeneration ||
-                                   isAnimating;
+    // Same instant-update scheme as the window path: the sharp FBO is the
+    // authoritative unblurred background cache - full recapture on geometry
+    // change, per-damage-rect updates otherwise (never reading stale FB
+    // areas, which contain this layer's own previous output).
+    CBox paddedBuffer = transformBox;
+    paddedBuffer.expand(GlassRenderer::SAMPLE_PADDING_PX);
+    paddedBuffer = paddedBuffer
+                       .intersection(CBox{0.0, 0.0, monitor->m_pixelSize.x, monitor->m_pixelSize.y})
+                       .noNegativeSize();
 
-    // Same stale-FB guard as the window path: outside the frame's damage the
-    // FB still holds last frame's finished image (including this layer as
-    // already composited) - resampling then feeds the glass its own previous
-    // output. Only resample when damage fully covers the padded region.
-    bool sampleRegionFresh = true;
-    if (m_hasCachedSample) {
-        CBox paddedLogical = *layerBox;
-        paddedLogical.expand(GlassRenderer::SAMPLE_PADDING_PX / monitor->m_scale);
-        paddedLogical = paddedLogical
-                            .intersection(CBox{0.0, 0.0, monitor->m_transformedSize.x, monitor->m_transformedSize.y})
-                            .noNegativeSize();
-        CRegion uncovered{paddedLogical};
-        uncovered.subtract(g_pHyprRenderer->m_renderData.finalDamage);
-        sampleRegionFresh = uncovered.empty();
-    }
+    CRegion bufferDamage = g_pHyprRenderer->m_renderData.finalDamage.copy();
+    bufferDamage.transform(Math::wlTransformToHyprutils(Math::invertTransform(monitor->m_transform)),
+                           monitor->m_transformedSize.x, monitor->m_transformedSize.y);
+    bufferDamage.intersect(paddedBuffer);
+
+    const bool geometryChanged = !m_hasCachedSample || transformBox != m_lastSampleBox;
 
     if (layerSurface->m_fadingOut) {
         // During fade-out, re-sampling captures stale pixels. Reuse cached sample.
         if (!m_hasCachedSample)
             return;
-    } else if (backgroundChanged && sampleRegionFresh) {
+    } else if (geometryChanged || !bufferDamage.empty()) {
         const bool isDark          = resolveThemeIsDark();
         const std::string preset   = resolvePresetName();
         const SResolveContext ctx  = {preset, isDark, g_pGlobalState->config, g_pGlobalState->customPresets};
@@ -175,7 +162,8 @@ void CGlassLayerSurface::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
         float blurStrength   = resolvePresetFloat(ctx, &SPresetValues::blurStrength, &SOverridableConfig::blurStrength);
         int downscale        = blurStrength >= GlassRenderer::BLUR_DOWNSCALE_THRESHOLD ? GlassRenderer::BLUR_DOWNSCALE_MAX : 1;
 
-        GlassRenderer::sampleBackground(m_sampleFramebuffer, source, transformBox, m_sampleLayout, downscale, &m_sharpFramebuffer);
+        GlassRenderer::sampleBackground(m_sampleFramebuffer, source, transformBox, m_sampleLayout, downscale,
+                                        &m_sharpFramebuffer, geometryChanged ? nullptr : &bufferDamage);
 
         float blurRadius     = blurStrength * 12.0f / downscale;
         int blurIterations   = std::clamp(static_cast<int>(resolvePresetInt(ctx, &SPresetValues::blurIterations, &SOverridableConfig::blurIterations)), 1, 5);
@@ -185,10 +173,10 @@ void CGlassLayerSurface::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
         int viewportHeight   = static_cast<int>(g_pHyprRenderer->m_renderData.pMonitor->m_pixelSize.y);
         GlassRenderer::blurBackground(m_sampleFramebuffer, blurRadius, blurIterations, dynamic_cast<Render::GL::CGLFramebuffer*>(source.get())->getFBID(), viewportWidth, viewportHeight);
 
-        m_hasCachedSample      = true;
-        m_lastSceneGeneration  = currentGeneration;
+        m_hasCachedSample = true;
+        m_lastSampleBox   = transformBox;
     }
-    // else: background unchanged, reuse cached blur — skip 7 GPU operations
+    // else: nothing re-rendered under us this frame, reuse cached blur
 
     // Redirect surface rendering to a temp FBO cleared to transparent.
     // The original renderLayer (called between pre/post elements) will render
@@ -221,6 +209,12 @@ void CGlassLayerSurface::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
 
     if (m_surfaceTempFramebuffer->m_size.x != monitorWidth || m_surfaceTempFramebuffer->m_size.y != monitorHeight)
         m_surfaceTempFramebuffer->alloc(monitorWidth, monitorHeight, DRM_FORMAT_ABGR16161616F);
+
+    // Mirror the real target's image description: core code running during
+    // the redirect reads currentFB->imageDescription() (e.g. the shadow
+    // renderer's CM path) and an unset one aborts the compositor. See the
+    // matching comment in WindowGlassState::sampleAndRedirect.
+    m_surfaceTempFramebuffer->setImageDescription(source->imageDescription());
 
     m_savedCurrentFB = source;
 

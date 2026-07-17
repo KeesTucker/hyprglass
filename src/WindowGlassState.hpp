@@ -37,7 +37,7 @@ class CWindowGlassState {
     Vector2D m_lastPosition;
     Vector2D m_lastSize;
 
-    uint64_t m_lastSceneGeneration = 0;
+    CBox     m_lastSampleBox      = {};
 
     SP<Render::IFramebuffer> m_savedCurrentFB;
 

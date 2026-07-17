@@ -154,34 +154,31 @@ void CWindowGlassState::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
 
     CBox transformBox = transformedWindowBox(*windowBox, monitor);
 
-    const uint64_t currentGeneration = g_pGlobalState->getSceneGeneration(monitor.get());
-    const bool isAnimating = window->m_realPosition->isBeingAnimated() || window->m_realSize->isBeingAnimated();
-    const bool backgroundChanged = !m_hasCachedSample ||
-                                   currentGeneration != m_lastSceneGeneration ||
-                                   isAnimating;
+    // Instant updates with no self-sampling: the sharp FBO is an
+    // authoritative unblurred cache of the background. Full recapture when
+    // the sampled geometry changes; otherwise only this frame's
+    // freshly-rendered damage rects are blitted into it (areas outside the
+    // damage still hold last frame's finished image - including our own
+    // window - and are never read). The blur is re-derived from the cache
+    // whenever anything was captured, so content changing beneath the glass
+    // (video, scrolling) shows through with no lag.
+    CBox paddedBuffer = transformBox;
+    paddedBuffer.expand(GlassRenderer::SAMPLE_PADDING_PX);
+    paddedBuffer = paddedBuffer
+                       .intersection(CBox{0.0, 0.0, monitor->m_pixelSize.x, monitor->m_pixelSize.y})
+                       .noNegativeSize();
 
-    // A generation bump from activity elsewhere doesn't mean OUR padded
-    // region was re-rendered this frame: the monitor FB is persistent, and
-    // outside the frame's damage it still holds last frame's *finished*
-    // image - including this window's own border and surface. Resampling
-    // then makes the glass refract its own previous rendering (seen live as
-    // the window's own border warped into the rim). Only resample when the
-    // frame's damage fully covers the padded sample region; otherwise keep
-    // the cache and deliberately don't advance m_lastSceneGeneration, so we
-    // retry on the next frame that actually re-renders beneath us.
-    bool sampleRegionFresh = true;
-    if (m_hasCachedSample) {
-        CBox paddedLogical = *windowBox;
-        paddedLogical.expand(GlassRenderer::SAMPLE_PADDING_PX / monitor->m_scale);
-        paddedLogical = paddedLogical
-                            .intersection(CBox{0.0, 0.0, monitor->m_transformedSize.x, monitor->m_transformedSize.y})
-                            .noNegativeSize();
-        CRegion uncovered{paddedLogical};
-        uncovered.subtract(g_pHyprRenderer->m_renderData.finalDamage);
-        sampleRegionFresh = uncovered.empty();
-    }
+    // Frame damage is tracked in logical space; the blit source is the
+    // buffer-oriented FB, so transform the region the same way core's
+    // scissor() does.
+    CRegion bufferDamage = g_pHyprRenderer->m_renderData.finalDamage.copy();
+    bufferDamage.transform(Math::wlTransformToHyprutils(Math::invertTransform(monitor->m_transform)),
+                           monitor->m_transformedSize.x, monitor->m_transformedSize.y);
+    bufferDamage.intersect(paddedBuffer);
 
-    if (backgroundChanged && sampleRegionFresh) {
+    const bool geometryChanged = !m_hasCachedSample || transformBox != m_lastSampleBox;
+
+    if (geometryChanged || !bufferDamage.empty()) {
         const bool isDark          = resolveThemeIsDark();
         const std::string preset   = resolvePresetName();
         const SResolveContext ctx  = {preset, isDark, g_pGlobalState->config, g_pGlobalState->customPresets};
@@ -189,7 +186,8 @@ void CWindowGlassState::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
         float blurStrength   = resolvePresetFloat(ctx, &SPresetValues::blurStrength, &SOverridableConfig::blurStrength);
         int downscale        = blurStrength >= GlassRenderer::BLUR_DOWNSCALE_THRESHOLD ? GlassRenderer::BLUR_DOWNSCALE_MAX : 1;
 
-        GlassRenderer::sampleBackground(m_sampleFramebuffer, source, transformBox, m_sampleLayout, downscale, &m_sharpFramebuffer);
+        GlassRenderer::sampleBackground(m_sampleFramebuffer, source, transformBox, m_sampleLayout, downscale,
+                                        &m_sharpFramebuffer, geometryChanged ? nullptr : &bufferDamage);
 
         float blurRadius     = blurStrength * 12.0f / downscale;
         int blurIterations   = std::clamp(static_cast<int>(resolvePresetInt(ctx, &SPresetValues::blurIterations, &SOverridableConfig::blurIterations)), 1, 5);
@@ -201,8 +199,8 @@ void CWindowGlassState::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
         int viewportHeight   = static_cast<int>(monitor->m_pixelSize.y);
         GlassRenderer::blurBackground(m_sampleFramebuffer, blurRadius, blurIterations, dynamic_cast<Render::GL::CGLFramebuffer*>(source.get())->getFBID(), viewportWidth, viewportHeight);
 
-        m_hasCachedSample     = true;
-        m_lastSceneGeneration = currentGeneration;
+        m_hasCachedSample = true;
+        m_lastSampleBox   = transformBox;
     }
 
     // Buffer dimensions (m_pixelSize), NOT m_transformedSize: this FBO stands in
@@ -231,6 +229,16 @@ void CWindowGlassState::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
 
     if (m_surfaceTempFramebuffer->m_size.x != monitorWidth || m_surfaceTempFramebuffer->m_size.y != monitorHeight)
         m_surfaceTempFramebuffer->alloc(monitorWidth, monitorHeight, DRM_FORMAT_ABGR16161616F);
+
+    // The temp FBO stands in for currentFB, and core code that runs while the
+    // redirect is active reads currentFB->imageDescription() - notably the
+    // shadow renderer's color-management path (a window's shadow pass element
+    // can execute between our redirect and composite for windows whose
+    // decorations were registered after ours). An unset image description
+    // aborts the whole compositor there (uncaught exception -> SIGABRT in
+    // renderRoundedShadow; took the session down twice once a theme with
+    // shadows enabled was active). Mirror the real target's description.
+    m_surfaceTempFramebuffer->setImageDescription(source->imageDescription());
 
     m_savedCurrentFB = source;
 

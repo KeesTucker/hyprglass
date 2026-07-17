@@ -30,7 +30,7 @@ static void uploadThemeUniforms(const SResolveContext& ctx) {
 
 void sampleBackground(SP<Render::IFramebuffer>& sampleFramebuffer, SP<Render::IFramebuffer> sourceFramebuffer,
                        CBox box, SSampleLayout& outLayout, int downscale,
-                       SP<Render::IFramebuffer>* sharpFramebuffer) {
+                       SP<Render::IFramebuffer>* sharpFramebuffer, const CRegion* partialDamage) {
     if (!sourceFramebuffer)
         return;
     const int pad = SAMPLE_PADDING_PX;
@@ -95,8 +95,67 @@ void sampleBackground(SP<Render::IFramebuffer>& sampleFramebuffer, SP<Render::IF
     // DRAW framebuffer, causing partial writes and stale noise artifacts.
     g_pHyprOpenGL->setCapStatus(GL_SCISSOR_TEST, false);
 
-    // Clear the sample FBO before blitting. Clamped regions (near edges)
-    // would otherwise contain uninitialized GPU memory (pink artifacts).
+    if (sharpFramebuffer) {
+        // The sharp FBO is the *authoritative unblurred cache* of the
+        // background: a full capture when the sampled geometry changes, and
+        // per-damage-rect updates otherwise (partialDamage, buffer coords).
+        // Only freshly-rendered rects are ever read from the source FB -
+        // outside the frame's damage the FB holds last frame's finished
+        // image including the caller's own window, which must never leak
+        // into the sample. The (possibly downscaled) blur input is then
+        // re-derived from the sharp cache, so content changes beneath the
+        // glass show through immediately.
+        if (!*sharpFramebuffer)
+            *sharpFramebuffer = g_pHyprRenderer->createFB("hyprglass-sharp");
+
+        bool fullCapture = !partialDamage;
+        if ((*sharpFramebuffer)->m_size.x != fullWidth || (*sharpFramebuffer)->m_size.y != fullHeight) {
+            (*sharpFramebuffer)->alloc(fullWidth, fullHeight, sourceFramebuffer->m_drmFormat);
+            fullCapture = true; // freshly allocated: previous content is gone
+        }
+
+        const int offX = static_cast<int>(box.x) - pad;
+        const int offY = static_cast<int>(box.y) - pad;
+
+        glBindFramebuffer(GL_FRAMEBUFFER, fbId(*sharpFramebuffer));
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, fbId(sourceFramebuffer));
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbId(*sharpFramebuffer));
+
+        if (fullCapture) {
+            glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            glBlitFramebuffer(srcX0, srcY0, srcX1, srcY1,
+                              fullDstX0, fullDstY0,
+                              fullDstX0 + (srcX1 - srcX0), fullDstY0 + (srcY1 - srcY0),
+                              GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        } else {
+            for (const auto& r : partialDamage->getRects()) {
+                const int rx0 = std::max(static_cast<int>(r.x1), srcX0);
+                const int ry0 = std::max(static_cast<int>(r.y1), srcY0);
+                const int rx1 = std::min(static_cast<int>(r.x2), srcX1);
+                const int ry1 = std::min(static_cast<int>(r.y2), srcY1);
+                if (rx0 >= rx1 || ry0 >= ry1)
+                    continue;
+                glBlitFramebuffer(rx0, ry0, rx1, ry1,
+                                  rx0 - offX, ry0 - offY, rx1 - offX, ry1 - offY,
+                                  GL_COLOR_BUFFER_BIT, GL_NEAREST);
+            }
+        }
+
+        // Re-derive the blur input from the sharp cache (downscales when the
+        // blur is strong enough to hide it).
+        glBindFramebuffer(GL_FRAMEBUFFER, fbId(sampleFramebuffer));
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, fbId(*sharpFramebuffer));
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbId(sampleFramebuffer));
+        glBlitFramebuffer(0, 0, fullWidth, fullHeight,
+                          0, 0, sampleWidth, sampleHeight,
+                          GL_COLOR_BUFFER_BIT, GL_LINEAR);
+        return;
+    }
+
+    // No sharp cache requested: legacy direct full capture.
     glBindFramebuffer(GL_FRAMEBUFFER, fbId(sampleFramebuffer));
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT);
@@ -106,34 +165,6 @@ void sampleBackground(SP<Render::IFramebuffer>& sampleFramebuffer, SP<Render::IF
     glBlitFramebuffer(srcX0, srcY0, srcX1, srcY1,
                       dstX0, dstY0, dstX1, dstY1,
                       GL_COLOR_BUFFER_BIT, GL_LINEAR);
-
-    // Unblurred full-res copy of the same region for the refracted rim.
-    // Deliberately not derived from the (possibly downscaled) blur sample -
-    // its whole point is staying sharp. Same clamped source region; the
-    // destination coords are the *unscaled* equivalents of the clamp
-    // adjustments above.
-    if (sharpFramebuffer) {
-        if (!*sharpFramebuffer)
-            *sharpFramebuffer = g_pHyprRenderer->createFB("hyprglass-sharp");
-
-        if ((*sharpFramebuffer)->m_size.x != fullWidth || (*sharpFramebuffer)->m_size.y != fullHeight)
-            (*sharpFramebuffer)->alloc(fullWidth, fullHeight, sourceFramebuffer->m_drmFormat);
-
-        int sharpDstX0 = fullDstX0;
-        int sharpDstY0 = fullDstY0;
-        int sharpDstX1 = sharpDstX0 + (srcX1 - srcX0);
-        int sharpDstY1 = sharpDstY0 + (srcY1 - srcY0);
-
-        glBindFramebuffer(GL_FRAMEBUFFER, fbId(*sharpFramebuffer));
-        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
-
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, fbId(sourceFramebuffer));
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbId(*sharpFramebuffer));
-        glBlitFramebuffer(srcX0, srcY0, srcX1, srcY1,
-                          sharpDstX0, sharpDstY0, sharpDstX1, sharpDstY1,
-                          GL_COLOR_BUFFER_BIT, GL_NEAREST);
-    }
 }
 
 void blurBackground(SP<Render::IFramebuffer> sampleFramebuffer, float radius, int iterations,

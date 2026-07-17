@@ -43,11 +43,15 @@ struct SSampleLayout {
 
 // sharpFramebuffer, when non-null, receives a full-resolution unblurred copy
 // of the same padded region (always full-res, even when the blur sample is
-// downscaled) - the shader's refracted rim samples it so the edge warp shows
-// sharp content instead of invisibly displacing blur.
+// downscaled) - the shader's refracted rim samples it, and it doubles as the
+// authoritative background cache: pass partialDamage (buffer coords,
+// pre-intersected with the padded region) to update only freshly-rendered
+// rects instead of recapturing everything; nullptr = full capture (required
+// whenever the sampled geometry changed).
 void sampleBackground(SP<Render::IFramebuffer>& sampleFramebuffer, SP<Render::IFramebuffer> sourceFramebuffer,
                        CBox box, SSampleLayout& outLayout, int downscale = 1,
-                       SP<Render::IFramebuffer>* sharpFramebuffer = nullptr);
+                       SP<Render::IFramebuffer>* sharpFramebuffer = nullptr,
+                       const CRegion* partialDamage = nullptr);
 
 void blurBackground(SP<Render::IFramebuffer> sampleFramebuffer, float radius, int iterations,
                     GLuint callerFramebufferID, int viewportWidth, int viewportHeight);

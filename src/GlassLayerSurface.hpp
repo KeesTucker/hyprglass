@@ -35,7 +35,7 @@ class CGlassLayerSurface {
 
     // Scene generation at last blur — skip re-sampling when only the layer
     // surface content changed (e.g. clock tick) but the background didn't.
-    uint64_t     m_lastSceneGeneration = 0;
+    CBox         m_lastSampleBox      = {};
 
     // Saved currentFB pointer, restored in compositeAndRestore
     SP<Render::IFramebuffer> m_savedCurrentFB;
