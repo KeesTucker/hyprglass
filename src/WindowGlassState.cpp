@@ -234,15 +234,27 @@ void CWindowGlassState::compositeAndRestore(PHLMONITOR monitor, float alpha) {
     if (!windowBoxOpt)
         return;
 
-    CBox rawBox       = *windowBoxOpt;
+    float monitorScale = monitor->m_scale;
+
+    // The border ring is drawn outside the window's own box (Hyprland reserves
+    // border-sized decoration space around it, see CHyprBorderDecoration::draw()),
+    // not inside it. Our composite quad has to reach into that ring too, or the
+    // border never gets copied back from the temp FBO to the real target -
+    // confirmed by reading back the temp FBO directly at the border's screen
+    // position, which held valid border-colored pixels just outside rawBox.
+    const float borderExpand = window->getRealBorderSize() * monitorScale;
+
+    CBox rawBox = *windowBoxOpt;
+    rawBox.expand(borderExpand);
     CBox transformBox = transformedWindowBox(rawBox, monitor);
 
     const bool isDark          = resolveThemeIsDark();
     const std::string preset   = resolvePresetName();
     const SResolveContext ctx  = {preset, isDark, g_pGlobalState->config, g_pGlobalState->customPresets};
 
-    float monitorScale  = monitor->m_scale;
-    float cornerRadius  = window->rounding() * monitorScale;
+    // Grow the rounding to stay roughly concentric with the expanded box,
+    // approximating the border's own (slightly larger) outer rounding.
+    float cornerRadius  = window->rounding() * monitorScale + borderExpand;
     float roundingPower = window->roundingPower();
 
     int monitorWidth  = static_cast<int>(monitor->m_transformedSize.x);
