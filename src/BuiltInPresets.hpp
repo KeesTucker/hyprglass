@@ -38,9 +38,11 @@ namespace GlobalDefaults {
     // bend band per user preference - 1.2 -> 60px max pull (the full sample
     // padding; the falloff makes the actual reach shorter), 0.05 keeps the
     // band tight, which also steepens the displacement gradient so the bend
-    // reads stronger. Aberration 0.6 = visible but not blotchy fringing.
+    // reads stronger. Aberration walked down further on 2026-07-18 (0.6 ->
+    // 0.5 -> 0.4) by live user preference: 0.4 keeps a visible rim fringe
+    // without it reading as blotchy.
     inline constexpr float   REFRACTION_STRENGTH  = 1.2f;
-    inline constexpr float   CHROMATIC_ABERRATION = 0.6f;
+    inline constexpr float   CHROMATIC_ABERRATION = 0.4f;
     inline constexpr float   FRESNEL_STRENGTH     = 0.6f;
     inline constexpr float   SPECULAR_STRENGTH    = 0.8f;
     inline constexpr float   GLASS_OPACITY        = 1.0f;
