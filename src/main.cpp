@@ -200,12 +200,36 @@ static void hkRenderLayer(Render::IHyprRenderer* thisptr, PHLLS layerSurface, PH
 }
 
 
+// Plugin-local single-instance-marker ownership (see PLUGIN_INIT guard).
+static bool g_ownsInstanceMarker = false;
+
 APICALL EXPORT std::string PLUGIN_API_VERSION() {
     return HYPRLAND_API_VERSION;
 }
 
 APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     PHANDLE = handle;
+
+    // Refuse a second live instance. Hyprland only rejects duplicate *paths*,
+    // so the hyprpm-cached copy plus the dev-tree copy can both load - two
+    // instances mean doubled decorations and nested currentFB redirects
+    // (instance B samples instance A's temp FBO as "background"), which took
+    // the whole session down in core's shadow renderer. Each dlopened .so has
+    // its own copy of every global, so the marker must live somewhere truly
+    // process-wide: the environment. Throwing here is the supported clean
+    // refusal - PluginSystem catches it, unloads us, and shows the error.
+    if (getenv("HYPRGLASS_ACTIVE_INSTANCE")) {
+        HyprlandAPI::addNotification(PHANDLE,
+            std::format("[{}] Another hyprglass instance is already loaded - refusing to double-load", PLUGIN_NAME),
+            CHyprColor{1.0, 0.2, 0.2, 1.0}, 8000);
+        throw std::runtime_error("hyprglass is already loaded (second instance refused)");
+    }
+    setenv("HYPRGLASS_ACTIVE_INSTANCE", "1", 1);
+    // Plugin-local (each dlopened .so has its own globals): marks that THIS
+    // instance owns the env marker. The refused instance's PLUGIN_EXIT also
+    // runs (unloadPlugin calls exitFunc even after a failed init) and must
+    // not clear the marker out from under the live instance.
+    g_ownsInstanceMarker = true;
 
     const std::string HASH        = __hyprland_api_get_hash();
     const std::string CLIENT_HASH = __hyprland_api_get_client_hash();
@@ -214,6 +238,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         HyprlandAPI::addNotification(PHANDLE,
             std::format("[{}] Version mismatch!", PLUGIN_NAME),
             CHyprColor{1.0, 0.2, 0.2, 1.0}, 5000);
+        unsetenv("HYPRGLASS_ACTIVE_INSTANCE");
+        g_ownsInstanceMarker = false;
         throw std::runtime_error("Version mismatch");
     }
 
@@ -304,6 +330,13 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
+    // Release the single-instance marker - but only if this instance owns
+    // it (a refused double-load instance's exit also lands here).
+    if (g_ownsInstanceMarker) {
+        unsetenv("HYPRGLASS_ACTIVE_INSTANCE");
+        g_ownsInstanceMarker = false;
+    }
+
     if (!g_pGlobalState)
         return;
 
