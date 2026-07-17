@@ -27,18 +27,21 @@ inline constexpr SThemeDefaults LIGHT_THEME_DEFAULTS = {1.12f, 0.92f, 0.85f, 0.1
 // Theme-sensitive settings (brightness, contrast, etc.) use SENTINEL at global
 // level so they fall through to the per-theme hardcoded defaults above.
 namespace GlobalDefaults {
-    inline constexpr float   BLUR_STRENGTH        = 2.0f;
+    // 1.3 (was 2.0): keeps recognizable structure through the frosted
+    // interior - 2.0 read as "slightly too blurry in the middle" in use.
+    inline constexpr float   BLUR_STRENGTH        = 1.3f;
     inline constexpr int64_t BLUR_ITERATIONS      = 3;
-    // Tuned live (hyprctl keyword iteration, 2026-07-17) for the sharp-rim
-    // outward refraction: 1.0 -> 50px max pull (within the 60px sample
-    // padding), aberration 0.6 gives visible-but-not-blotchy fringing,
-    // 0.10 widens the warp band enough to read as thick glass.
-    inline constexpr float   REFRACTION_STRENGTH  = 1.0f;
+    // Tuned live (hyprctl keyword iteration, 2026-07-17): a thin, strong
+    // bend band per user preference - 1.2 -> 60px max pull (the full sample
+    // padding; the falloff makes the actual reach shorter), 0.05 keeps the
+    // band tight, which also steepens the displacement gradient so the bend
+    // reads stronger. Aberration 0.6 = visible but not blotchy fringing.
+    inline constexpr float   REFRACTION_STRENGTH  = 1.2f;
     inline constexpr float   CHROMATIC_ABERRATION = 0.6f;
     inline constexpr float   FRESNEL_STRENGTH     = 0.6f;
     inline constexpr float   SPECULAR_STRENGTH    = 0.8f;
     inline constexpr float   GLASS_OPACITY        = 1.0f;
-    inline constexpr float   EDGE_THICKNESS       = 0.10f;
+    inline constexpr float   EDGE_THICKNESS       = 0.05f;
     inline constexpr int64_t TINT_COLOR           = 0x8899aa22;
     inline constexpr float   LENS_DISTORTION      = 0.5f;
 } // namespace GlobalDefaults
