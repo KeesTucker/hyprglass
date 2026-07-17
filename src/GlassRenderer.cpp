@@ -157,13 +157,22 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
     auto& shaderManager  = g_pGlobalState->shaderManager;
     const auto& uniforms = shaderManager.glassUniforms;
 
-    // Don't pass an explicit transform here - let Hyprland's own ambient
-    // monitorTransformEnabled() state decide, same as core's renderBorder()
-    // does via projectBoxToTarget(newBox) with no second argument. Forcing
-    // our own inverted transform here double-applies rotation on rotated
-    // monitors (once here, again at Hyprland's final scanout transform),
-    // producing zoomed/clipped rendering.
-    Mat3x3 glMatrix = g_pHyprRenderer->projectBoxToTarget(rawBox);
+    // Pass the inverted monitor transform explicitly: both textures we sample
+    // (the blitted blur sample and the temp-FBO mask) hold content in *buffer*
+    // orientation (blitted/rendered straight from/into buffer space), unlike
+    // surface textures which are stored logically. The transform argument
+    // rotates the quad's texcoord<->position correspondence (projectBox rotates
+    // about the unit-square center - vertex positions still cover the same
+    // box) so UVs traverse the content in buffer orientation. Same pattern as
+    // core's renderTextureInternal passing invertTransform(texture->m_transform)
+    // for pre-transformed buffer content. Without this, content composites
+    // transposed/mirrored on rotated monitors. (An earlier session removed
+    // this arg blaming it for "zoomed/clipped" rotation corruption - that was
+    // actually caused by m_transformedSize/m_pixelSize mismatches in the temp
+    // FBO, viewport restore, and mask UV normalization, since fixed.)
+    const auto contentTransform = Math::wlTransformToHyprutils(
+        Math::invertTransform(g_pHyprRenderer->m_renderData.pMonitor->m_transform));
+    Mat3x3 glMatrix = g_pHyprRenderer->projectBoxToTarget(rawBox, contentTransform);
     auto texture    = sampleFramebuffer->getTexture();
 
     glMatrix.transpose();
