@@ -27,9 +27,12 @@ inline constexpr SThemeDefaults LIGHT_THEME_DEFAULTS = {1.12f, 0.92f, 0.85f, 0.1
 // Theme-sensitive settings (brightness, contrast, etc.) use SENTINEL at global
 // level so they fall through to the per-theme hardcoded defaults above.
 namespace GlobalDefaults {
-    // 1.3 (was 2.0): keeps recognizable structure through the frosted
-    // interior - 2.0 read as "slightly too blurry in the middle" in use.
-    inline constexpr float   BLUR_STRENGTH        = 1.3f;
+    // Blur kernel radius = strength * 12px, applied blur_iterations times
+    // (half-res above the downscale threshold). Walked down from the
+    // original 2.0 -> 1.3 -> 0.8 by user preference: 0.8 is a light frost
+    // that keeps shapes readable through the glass; ~0.55 is nearly clear
+    // if even less is ever wanted.
+    inline constexpr float   BLUR_STRENGTH        = 0.8f;
     inline constexpr int64_t BLUR_ITERATIONS      = 3;
     // Tuned live (hyprctl keyword iteration, 2026-07-17): a thin, strong
     // bend band per user preference - 1.2 -> 60px max pull (the full sample
