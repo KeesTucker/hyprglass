@@ -157,10 +157,13 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
     auto& shaderManager  = g_pGlobalState->shaderManager;
     const auto& uniforms = shaderManager.glassUniforms;
 
-    const auto transform = Math::wlTransformToHyprutils(
-        Math::invertTransform(g_pHyprRenderer->m_renderData.pMonitor->m_transform));
-
-    Mat3x3 glMatrix = g_pHyprRenderer->projectBoxToTarget(rawBox, transform);
+    // Don't pass an explicit transform here - let Hyprland's own ambient
+    // monitorTransformEnabled() state decide, same as core's renderBorder()
+    // does via projectBoxToTarget(newBox) with no second argument. Forcing
+    // our own inverted transform here double-applies rotation on rotated
+    // monitors (once here, again at Hyprland's final scanout transform),
+    // producing zoomed/clipped rendering.
+    Mat3x3 glMatrix = g_pHyprRenderer->projectBoxToTarget(rawBox);
     auto texture    = sampleFramebuffer->getTexture();
 
     glMatrix.transpose();

@@ -1,21 +1,18 @@
 #pragma once
 
-#include "GlassRenderer.hpp"
-#include "PluginConfig.hpp"
 #include "WindowGlassState.hpp"
 
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/render/decorations/IHyprWindowDecoration.hpp>
-#include <hyprland/src/render/Framebuffer.hpp>
 #include <memory>
 
-// BOTTOM-layer half of window glass: queues the redirect step before the
-// window's own surface renders. See CGlassCompositeDecoration for the
-// OVER-layer half that composites afterward. Both share a CWindowGlassState.
-class CGlassDecoration : public IHyprWindowDecoration {
+// OVER-layer half of window glass: queues the composite+restore step after
+// the window's own surface has rendered. Paired with CGlassDecoration
+// (BOTTOM), sharing the same CWindowGlassState.
+class CGlassCompositeDecoration : public IHyprWindowDecoration {
   public:
-    CGlassDecoration(PHLWINDOW window, std::shared_ptr<CWindowGlassState> state);
-    ~CGlassDecoration() override = default;
+    CGlassCompositeDecoration(PHLWINDOW window, std::shared_ptr<CWindowGlassState> state);
+    ~CGlassCompositeDecoration() override = default;
 
     [[nodiscard]] SDecorationPositioningInfo getPositioningInfo() override;
     void                                     onPositioningReply(const SDecorationPositioningReply& reply) override;
@@ -27,12 +24,9 @@ class CGlassDecoration : public IHyprWindowDecoration {
     [[nodiscard]] uint64_t                   getDecorationFlags() override;
     [[nodiscard]] std::string                getDisplayName() override;
 
-    WP<CGlassDecoration> m_self;
+    WP<CGlassCompositeDecoration> m_self;
 
   private:
     PHLWINDOWREF                       m_window;
     std::shared_ptr<CWindowGlassState> m_state;
-
-    Vector2D m_lastPosition;
-    Vector2D m_lastSize;
 };

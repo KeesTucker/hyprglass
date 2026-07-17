@@ -1,3 +1,4 @@
+#include "GlassCompositeDecoration.hpp"
 #include "GlassDecoration.hpp"
 #include "GlassLayerCompositeElement.hpp"
 #include "GlassLayerPassElement.hpp"
@@ -5,6 +6,7 @@
 #include "GlassRenderer.hpp"
 #include "Globals.hpp"
 #include "PluginConfig.hpp"
+#include "WindowGlassState.hpp"
 
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
@@ -34,21 +36,27 @@ static void clearLayerGlassOnClose(PHLLS layerSurface) {
 }
 
 static void onNewWindow(PHLWINDOW window) {
-    if (std::ranges::any_of(window->m_windowDecorations,
-                            [](const auto& decoration) { return decoration->getDisplayName() == "HyprGlass"; }))
+    if (g_pGlobalState->windowStates.contains(window.get()))
         return;
 
-    auto decoration = makeUnique<CGlassDecoration>(window);
-    g_pGlobalState->decorations.emplace_back(decoration);
-    decoration->m_self = decoration;
-    HyprlandAPI::addWindowDecoration(PHANDLE, window, std::move(decoration));
+    auto state = std::make_shared<CWindowGlassState>(window);
+    g_pGlobalState->windowStates.emplace(window.get(), state);
+
+    auto bottomDeco = makeUnique<CGlassDecoration>(window, state);
+    g_pGlobalState->decorations.emplace_back(bottomDeco);
+    bottomDeco->m_self = bottomDeco;
+    HyprlandAPI::addWindowDecoration(PHANDLE, window, std::move(bottomDeco));
+
+    auto overDeco = makeUnique<CGlassCompositeDecoration>(window, state);
+    g_pGlobalState->compositeDecorations.emplace_back(overDeco);
+    overDeco->m_self = overDeco;
+    HyprlandAPI::addWindowDecoration(PHANDLE, window, std::move(overDeco));
 }
 
 static void onCloseWindow(PHLWINDOW window) {
-    std::erase_if(g_pGlobalState->decorations, [&window](const auto& decoration) {
-        auto* deco = decoration.get();
-        return !deco || deco->getOwner() == window;
-    });
+    g_pGlobalState->windowStates.erase(window.get());
+    std::erase_if(g_pGlobalState->decorations, [](const auto& decoration) { return !decoration; });
+    std::erase_if(g_pGlobalState->compositeDecorations, [](const auto& decoration) { return !decoration; });
 }
 
 // ── Layer surface support ────────────────────────────────────────────────────
@@ -300,6 +308,7 @@ APICALL EXPORT void PLUGIN_EXIT() {
         return;
 
     g_pHyprRenderer->m_renderPass.removeAllOfType("CGlassPassElement");
+    g_pHyprRenderer->m_renderPass.removeAllOfType("CGlassCompositePassElement");
     g_pHyprRenderer->m_renderPass.removeAllOfType("CGlassLayerPassElement");
     g_pHyprRenderer->m_renderPass.removeAllOfType("CGlassLayerCompositeElement");
 
@@ -308,6 +317,14 @@ APICALL EXPORT void PLUGIN_EXIT() {
             HyprlandAPI::removeWindowDecoration(PHANDLE, deco);
     }
     g_pGlobalState->decorations.clear();
+
+    for (auto& decoration : g_pGlobalState->compositeDecorations) {
+        if (auto* deco = decoration.get())
+            HyprlandAPI::removeWindowDecoration(PHANDLE, deco);
+    }
+    g_pGlobalState->compositeDecorations.clear();
+
+    g_pGlobalState->windowStates.clear();
 
     if (g_pGlobalState->renderLayerHook) {
         HyprlandAPI::removeFunctionHook(PHANDLE, g_pGlobalState->renderLayerHook);

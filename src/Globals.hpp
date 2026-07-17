@@ -3,6 +3,7 @@
 #include "GlassLayerSurface.hpp"
 #include "PluginConfig.hpp"
 #include "ShaderManager.hpp"
+#include "WindowGlassState.hpp"
 
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #include <hyprland/src/render/Framebuffer.hpp>
@@ -15,11 +16,22 @@
 #include <vector>
 
 class CGlassDecoration;
+class CGlassCompositeDecoration;
 
 struct SGlobalState {
-    std::vector<WP<CGlassDecoration>> decorations;
+    // Kept as two exactly-typed vectors (not a single vector of the polymorphic
+    // base WP<IHyprWindowDecoration>) - deliberately matching the upstream
+    // same-type UP->WP pattern exactly, since mixing an upcast with the
+    // UP->WP conversion is unproven and was the leading suspect in a heap
+    // corruption crash. Only used for cleanup in PLUGIN_EXIT.
+    std::vector<WP<CGlassDecoration>>         decorations;
+    std::vector<WP<CGlassCompositeDecoration>> compositeDecorations;
     CShaderManager                    shaderManager;
     SPluginConfig                     config;
+
+    // Per-window glass state (one per window, keyed by raw pointer), shared
+    // between each window's pair of BOTTOM/OVER decorations.
+    std::unordered_map<Desktop::View::CWindow*, std::shared_ptr<CWindowGlassState>> windowStates;
 
     // User-defined presets (populated from config keyword, swapped in on configReloaded)
     std::unordered_map<std::string, SCustomPreset> customPresets;

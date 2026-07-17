@@ -1,23 +1,24 @@
 #include "GlassPassElement.hpp"
-#include "GlassDecoration.hpp"
+#include "GlassRenderer.hpp"
 #include "Globals.hpp"
 #include "WindowGeometry.hpp"
+#include "WindowGlassState.hpp"
 
 CGlassPassElement::CGlassPassElement(const SGlassPassData& data)
     : m_data(data) {}
 
 std::vector<UP<IPassElement>> CGlassPassElement::draw() {
-    if (m_data.decoration.valid())
-        m_data.decoration->renderPass(g_pHyprRenderer->m_renderData.pMonitor.lock(), m_data.alpha);
+    if (m_data.windowState && m_data.windowState->getWindow())
+        m_data.windowState->sampleAndRedirect(g_pHyprRenderer->m_renderData.pMonitor.lock(), m_data.alpha);
 
     return {};
 }
 
 std::optional<CBox> CGlassPassElement::boundingBox() {
-    if (!m_data.decoration.valid())
+    if (!m_data.windowState)
         return std::nullopt;
 
-    auto window = m_data.decoration->getOwner();
+    auto window = m_data.windowState->getWindow();
     if (!window)
         return std::nullopt;
 
@@ -39,9 +40,7 @@ bool CGlassPassElement::needsLiveBlur() {
     // background behind the glass before we sample it. Without this,
     // partial damage (e.g. typing in a window below) leaves stale pixels
     // in the padded sampling region, causing blinking artifacts.
-    // Layers don't need this — they have their own blur cache with
-    // scene generation tracking.
-    return m_data.decoration.valid() && m_data.decoration->getOwner();
+    return m_data.windowState && m_data.windowState->getWindow();
 }
 
 bool CGlassPassElement::needsPrecomputeBlur() {
@@ -49,5 +48,5 @@ bool CGlassPassElement::needsPrecomputeBlur() {
 }
 
 bool CGlassPassElement::disableSimplification() {
-    return m_data.decoration.valid() && m_data.decoration->getOwner();
+    return m_data.windowState && m_data.windowState->getWindow();
 }
