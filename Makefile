@@ -1,7 +1,11 @@
 # HyprGlass Plugin
 
 CXX ?= g++
-CXXFLAGS = -fPIC -g -O2 -std=c++23
+# -MMD -MP: emit header dependency files so editing a .hpp rebuilds every
+# object that includes it. Without this, a struct layout change in a header
+# left stale .o files allocating the old object size while rebuilt TUs wrote
+# the new layout - a heap overflow that took down the live compositor.
+CXXFLAGS = -fPIC -g -O2 -std=c++23 -MMD -MP
 LDFLAGS = -shared
 INCLUDES = $(shell pkg-config --cflags hyprland pixman-1 libdrm)
 LIBS = $(shell pkg-config --libs hyprland)
@@ -20,12 +24,20 @@ all: $(TARGET)
 	@echo "[$(CXX)] $<"
 	@$(CXX) -c $(CXXFLAGS) $(INCLUDES) $< -o $@
 
+# Link to a temp file and rename into place: rename gives the output a new
+# inode, so a currently-loaded (mmapped) copy of the old .so keeps its own
+# intact backing file. Linking directly onto the loaded file truncates the
+# inode Hyprland has mapped - that corrupted the live compositor once
+# (SIGABRT in Hyprlang clearState on the next config reload).
 $(TARGET): $(OBJ)
 	@echo "Linking $(TARGET)..."
-	@$(CXX) $(LDFLAGS) $(OBJ) -o $@ $(LIBS)
+	@$(CXX) $(LDFLAGS) $(OBJ) -o $@.tmp $(LIBS)
+	@mv -f $@.tmp $@
 	@echo "Done!"
 
 clean:
-	rm -f $(OBJ) $(TARGET)
+	rm -f $(OBJ) $(OBJ:.o=.d) $(TARGET)
+
+-include $(OBJ:.o=.d)
 
 .PHONY: all clean
