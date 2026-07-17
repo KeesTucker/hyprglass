@@ -30,12 +30,23 @@ struct SMaskInfo {
     float    alphaThreshold = 0.001f;
 };
 
+// UV-space layout of a captured background sample. paddingRatio maps window
+// UV to the padded texture region; validMin/validMax bound the part of the
+// texture that actually received content (the blit is clamped at screen
+// edges and the remainder is cleared black - the shader clamps its sampling
+// to these bounds so edge windows stretch instead of refracting black).
+struct SSampleLayout {
+    Vector2D paddingRatio;
+    Vector2D validMin = {0.0, 0.0};
+    Vector2D validMax = {1.0, 1.0};
+};
+
 // sharpFramebuffer, when non-null, receives a full-resolution unblurred copy
 // of the same padded region (always full-res, even when the blur sample is
 // downscaled) - the shader's refracted rim samples it so the edge warp shows
 // sharp content instead of invisibly displacing blur.
 void sampleBackground(SP<Render::IFramebuffer>& sampleFramebuffer, SP<Render::IFramebuffer> sourceFramebuffer,
-                       CBox box, Vector2D& outPaddingRatio, int downscale = 1,
+                       CBox box, SSampleLayout& outLayout, int downscale = 1,
                        SP<Render::IFramebuffer>* sharpFramebuffer = nullptr);
 
 void blurBackground(SP<Render::IFramebuffer> sampleFramebuffer, float radius, int iterations,
@@ -44,11 +55,15 @@ void blurBackground(SP<Render::IFramebuffer> sampleFramebuffer, float radius, in
 // When mask is non-null (layers only), the shader composites the surface content
 // over the glass effect in a single pass. When mask is null (windows), the shader
 // outputs the glass effect alone.
+// refractOutward: true = rim pulls in content from beyond the boundary
+// (floating windows, layers); false = inward compression (tiled windows,
+// where outward sampling would show the neighboring windows in the rim).
 void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFramebuffer> targetFramebuffer,
                        CBox& rawBox, CBox& transformedBox,
                        float alpha, float cornerRadius, float roundingPower,
-                       const Vector2D& paddingRatio, const SResolveContext& resolveContext,
+                       const SSampleLayout& sampleLayout, const SResolveContext& resolveContext,
                        const SMaskInfo* mask = nullptr,
-                       SP<Render::IFramebuffer> sharpFramebuffer = nullptr);
+                       SP<Render::IFramebuffer> sharpFramebuffer = nullptr,
+                       bool refractOutward = true);
 
 } // namespace GlassRenderer

@@ -26,7 +26,7 @@ class CGlassLayerSurface {
     SP<Render::IFramebuffer> m_sampleFramebuffer;
     SP<Render::IFramebuffer> m_sharpFramebuffer;
     SP<Render::IFramebuffer> m_surfaceTempFramebuffer;
-    Vector2D     m_samplePaddingRatio;
+    GlassRenderer::SSampleLayout m_sampleLayout;
     bool         m_hasCachedSample = false;
 
     // Track last position/size to detect movement and expand damage

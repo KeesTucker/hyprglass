@@ -20,6 +20,8 @@ struct SGlassUniforms {
     GLint adaptiveDim = -1;
     GLint adaptiveBoost = -1;
     GLint sharpTex = -1;
+    GLint validBounds = -1;
+    GLint refractionDirSign = -1;
 
     // Layers only: temp FBO surface mask for content-aware glass
     GLint maskTex = -1;

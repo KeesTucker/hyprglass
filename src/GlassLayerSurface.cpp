@@ -147,11 +147,27 @@ void CGlassLayerSurface::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
                                    currentGeneration != m_lastSceneGeneration ||
                                    isAnimating;
 
+    // Same stale-FB guard as the window path: outside the frame's damage the
+    // FB still holds last frame's finished image (including this layer as
+    // already composited) - resampling then feeds the glass its own previous
+    // output. Only resample when damage fully covers the padded region.
+    bool sampleRegionFresh = true;
+    if (m_hasCachedSample) {
+        CBox paddedLogical = *layerBox;
+        paddedLogical.expand(GlassRenderer::SAMPLE_PADDING_PX / monitor->m_scale);
+        paddedLogical = paddedLogical
+                            .intersection(CBox{0.0, 0.0, monitor->m_transformedSize.x, monitor->m_transformedSize.y})
+                            .noNegativeSize();
+        CRegion uncovered{paddedLogical};
+        uncovered.subtract(g_pHyprRenderer->m_renderData.finalDamage);
+        sampleRegionFresh = uncovered.empty();
+    }
+
     if (layerSurface->m_fadingOut) {
         // During fade-out, re-sampling captures stale pixels. Reuse cached sample.
         if (!m_hasCachedSample)
             return;
-    } else if (backgroundChanged) {
+    } else if (backgroundChanged && sampleRegionFresh) {
         const bool isDark          = resolveThemeIsDark();
         const std::string preset   = resolvePresetName();
         const SResolveContext ctx  = {preset, isDark, g_pGlobalState->config, g_pGlobalState->customPresets};
@@ -159,7 +175,7 @@ void CGlassLayerSurface::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
         float blurStrength   = resolvePresetFloat(ctx, &SPresetValues::blurStrength, &SOverridableConfig::blurStrength);
         int downscale        = blurStrength >= GlassRenderer::BLUR_DOWNSCALE_THRESHOLD ? GlassRenderer::BLUR_DOWNSCALE_MAX : 1;
 
-        GlassRenderer::sampleBackground(m_sampleFramebuffer, source, transformBox, m_samplePaddingRatio, downscale, &m_sharpFramebuffer);
+        GlassRenderer::sampleBackground(m_sampleFramebuffer, source, transformBox, m_sampleLayout, downscale, &m_sharpFramebuffer);
 
         float blurRadius     = blurStrength * 12.0f / downscale;
         int blurIterations   = std::clamp(static_cast<int>(resolvePresetInt(ctx, &SPresetValues::blurIterations, &SOverridableConfig::blurIterations)), 1, 5);
@@ -288,6 +304,7 @@ void CGlassLayerSurface::compositeAndRestore(PHLMONITOR monitor, float alpha) {
     // in a single pass: glass behind, surface on top, using the temp FBO alpha.
     GlassRenderer::applyGlassEffect(m_sampleFramebuffer, target,
                                      rawBox, transformBox, alpha,
-                                     cornerRadius, roundingPower, m_samplePaddingRatio, ctx,
-                                     &maskInfo, m_sharpFramebuffer);
+                                     cornerRadius, roundingPower, m_sampleLayout, ctx,
+                                     &maskInfo, m_sharpFramebuffer,
+                                     /* refractOutward = */ true);
 }

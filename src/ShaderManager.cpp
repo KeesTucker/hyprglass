@@ -45,6 +45,8 @@ bool CShaderManager::compileGlassShader() {
     glassUniforms.adaptiveDim         = glGetUniformLocation(program, "adaptiveDim");
     glassUniforms.adaptiveBoost       = glGetUniformLocation(program, "adaptiveBoost");
     glassUniforms.sharpTex            = glGetUniformLocation(program, "sharpTex");
+    glassUniforms.validBounds         = glGetUniformLocation(program, "validBounds");
+    glassUniforms.refractionDirSign   = glGetUniformLocation(program, "refractionDirSign");
     glassUniforms.maskTex             = glGetUniformLocation(program, "maskTex");
     glassUniforms.useMask             = glGetUniformLocation(program, "useMask");
     glassUniforms.maskUVOffset        = glGetUniformLocation(program, "maskUVOffset");

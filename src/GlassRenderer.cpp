@@ -29,7 +29,7 @@ static void uploadThemeUniforms(const SResolveContext& ctx) {
 }
 
 void sampleBackground(SP<Render::IFramebuffer>& sampleFramebuffer, SP<Render::IFramebuffer> sourceFramebuffer,
-                       CBox box, Vector2D& outPaddingRatio, int downscale,
+                       CBox box, SSampleLayout& outLayout, int downscale,
                        SP<Render::IFramebuffer>* sharpFramebuffer) {
     if (!sourceFramebuffer)
         return;
@@ -70,10 +70,25 @@ void sampleBackground(SP<Render::IFramebuffer>& sampleFramebuffer, SP<Render::IF
     if (srcY1 > framebufferHeight) { dstY1 -= static_cast<int>((srcY1 - framebufferHeight) * yScale); srcY1 = framebufferHeight; }
 
     // Padding ratio is relative to the logical content area (resolution-independent)
-    outPaddingRatio = Vector2D(
+    outLayout.paddingRatio = Vector2D(
         static_cast<double>(pad) / fullWidth,
         static_cast<double>(pad) / fullHeight
     );
+
+    // Valid-content bounds in [0,1] UV of the padded region: where the source
+    // clamping above cut the blit short (window near a screen edge), the rest
+    // of the FBO is cleared black. Resolution-independent, so the same bounds
+    // apply to the (possibly downscaled) blur sample and the full-res sharp
+    // copy. The shader clamps its sampling here so refraction stretches edge
+    // content instead of pulling in black.
+    const int fullDstX0 = srcX0 - (static_cast<int>(box.x) - pad);
+    const int fullDstY0 = srcY0 - (static_cast<int>(box.y) - pad);
+    outLayout.validMin = Vector2D(
+        static_cast<double>(fullDstX0) / fullWidth,
+        static_cast<double>(fullDstY0) / fullHeight);
+    outLayout.validMax = Vector2D(
+        static_cast<double>(fullDstX0 + (srcX1 - srcX0)) / fullWidth,
+        static_cast<double>(fullDstY0 + (srcY1 - srcY0)) / fullHeight);
 
     // The render pass scissors each element to its damage region.
     // That scissor state leaks here and clips glBlitFramebuffer on the
@@ -104,8 +119,8 @@ void sampleBackground(SP<Render::IFramebuffer>& sampleFramebuffer, SP<Render::IF
         if ((*sharpFramebuffer)->m_size.x != fullWidth || (*sharpFramebuffer)->m_size.y != fullHeight)
             (*sharpFramebuffer)->alloc(fullWidth, fullHeight, sourceFramebuffer->m_drmFormat);
 
-        int sharpDstX0 = srcX0 - (static_cast<int>(box.x) - pad);
-        int sharpDstY0 = srcY0 - (static_cast<int>(box.y) - pad);
+        int sharpDstX0 = fullDstX0;
+        int sharpDstY0 = fullDstY0;
         int sharpDstX1 = sharpDstX0 + (srcX1 - srcX0);
         int sharpDstY1 = sharpDstY0 + (srcY1 - srcY0);
 
@@ -178,8 +193,9 @@ void blurBackground(SP<Render::IFramebuffer> sampleFramebuffer, float radius, in
 void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFramebuffer> targetFramebuffer,
                        CBox& rawBox, CBox& transformedBox,
                        float alpha, float cornerRadius, float roundingPower,
-                       const Vector2D& paddingRatio, const SResolveContext& resolveContext,
-                       const SMaskInfo* mask, SP<Render::IFramebuffer> sharpFramebuffer) {
+                       const SSampleLayout& sampleLayout, const SResolveContext& resolveContext,
+                       const SMaskInfo* mask, SP<Render::IFramebuffer> sharpFramebuffer,
+                       bool refractOutward) {
     if (!sampleFramebuffer || !targetFramebuffer)
         return;
 
@@ -258,8 +274,14 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
         static_cast<float>(tintColorValue & 0xFF) / 255.0f);
 
     glUniform2f(uniforms.uvPadding,
-        static_cast<float>(paddingRatio.x),
-        static_cast<float>(paddingRatio.y));
+        static_cast<float>(sampleLayout.paddingRatio.x),
+        static_cast<float>(sampleLayout.paddingRatio.y));
+    glUniform4f(uniforms.validBounds,
+        static_cast<float>(sampleLayout.validMin.x),
+        static_cast<float>(sampleLayout.validMin.y),
+        static_cast<float>(sampleLayout.validMax.x),
+        static_cast<float>(sampleLayout.validMax.y));
+    glUniform1f(uniforms.refractionDirSign, refractOutward ? 1.0f : -1.0f);
 
     // Layers only: enable mask and provide UV mapping from the glass quad into
     // the monitor-sized temp FBO. Windows use useMask=0 (no masking).

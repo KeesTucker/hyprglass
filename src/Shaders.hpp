@@ -33,6 +33,15 @@ precision highp float;
 
 uniform sampler2D tex;      // blurred padded background sample
 uniform sampler2D sharpTex; // unblurred full-res copy of the same region
+uniform vec4 validBounds;   // xy=min, zw=max valid UV of the captured region:
+                            // near screen edges the capture is clamped and the
+                            // rest of the FBO is cleared black - clamping the
+                            // sample UV here stretches edge content instead of
+                            // refracting black
+uniform float refractionDirSign; // +1: rim samples outward (floating windows,
+                                 // layers - pulls content from beyond the edge)
+                                 // -1: inward compression (tiled windows -
+                                 // outward would pull in neighboring windows)
 uniform vec2 fullSize;
 uniform float radius;
 uniform vec2 uvPadding;
@@ -72,14 +81,16 @@ vec2 toTexUV(vec2 wuv) {
     return wuv * (1.0 - 2.0 * uvPadding) + uvPadding;
 }
 
+vec2 clampValid(vec2 tuv) {
+    return clamp(tuv, validBounds.xy + 0.001, validBounds.zw - 0.001);
+}
+
 vec4 sampleBlurred(vec2 wuv) {
-    vec2 tuv = toTexUV(wuv);
-    return texture(tex, clamp(tuv, 0.001, 0.999));
+    return texture(tex, clampValid(toTexUV(wuv)));
 }
 
 vec4 sampleSharp(vec2 wuv) {
-    vec2 tuv = toTexUV(wuv);
-    return texture(sharpTex, clamp(tuv, 0.001, 0.999));
+    return texture(sharpTex, clampValid(toTexUV(wuv)));
 }
 
 // ============================================================================
@@ -165,7 +176,7 @@ void main() {
     // ========================================
     float refractionPx = refractionStrength * 50.0;
     float refractionMag = edgeProximity * refractionPx;
-    vec2 baseOffset = -inwardDir * refractionMag / fullSize;
+    vec2 baseOffset = -inwardDir * refractionDirSign * refractionMag / fullSize;
 
     // ========================================
     // CHROMATIC ABERRATION — per-channel refraction scale

@@ -160,7 +160,28 @@ void CWindowGlassState::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
                                    currentGeneration != m_lastSceneGeneration ||
                                    isAnimating;
 
-    if (backgroundChanged) {
+    // A generation bump from activity elsewhere doesn't mean OUR padded
+    // region was re-rendered this frame: the monitor FB is persistent, and
+    // outside the frame's damage it still holds last frame's *finished*
+    // image - including this window's own border and surface. Resampling
+    // then makes the glass refract its own previous rendering (seen live as
+    // the window's own border warped into the rim). Only resample when the
+    // frame's damage fully covers the padded sample region; otherwise keep
+    // the cache and deliberately don't advance m_lastSceneGeneration, so we
+    // retry on the next frame that actually re-renders beneath us.
+    bool sampleRegionFresh = true;
+    if (m_hasCachedSample) {
+        CBox paddedLogical = *windowBox;
+        paddedLogical.expand(GlassRenderer::SAMPLE_PADDING_PX / monitor->m_scale);
+        paddedLogical = paddedLogical
+                            .intersection(CBox{0.0, 0.0, monitor->m_transformedSize.x, monitor->m_transformedSize.y})
+                            .noNegativeSize();
+        CRegion uncovered{paddedLogical};
+        uncovered.subtract(g_pHyprRenderer->m_renderData.finalDamage);
+        sampleRegionFresh = uncovered.empty();
+    }
+
+    if (backgroundChanged && sampleRegionFresh) {
         const bool isDark          = resolveThemeIsDark();
         const std::string preset   = resolvePresetName();
         const SResolveContext ctx  = {preset, isDark, g_pGlobalState->config, g_pGlobalState->customPresets};
@@ -168,7 +189,7 @@ void CWindowGlassState::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
         float blurStrength   = resolvePresetFloat(ctx, &SPresetValues::blurStrength, &SOverridableConfig::blurStrength);
         int downscale        = blurStrength >= GlassRenderer::BLUR_DOWNSCALE_THRESHOLD ? GlassRenderer::BLUR_DOWNSCALE_MAX : 1;
 
-        GlassRenderer::sampleBackground(m_sampleFramebuffer, source, transformBox, m_samplePaddingRatio, downscale, &m_sharpFramebuffer);
+        GlassRenderer::sampleBackground(m_sampleFramebuffer, source, transformBox, m_sampleLayout, downscale, &m_sharpFramebuffer);
 
         float blurRadius     = blurStrength * 12.0f / downscale;
         int blurIterations   = std::clamp(static_cast<int>(resolvePresetInt(ctx, &SPresetValues::blurIterations, &SOverridableConfig::blurIterations)), 1, 5);
@@ -290,8 +311,26 @@ void CWindowGlassState::compositeAndRestore(PHLMONITOR monitor, float alpha) {
         .alphaThreshold = 0.001f * std::clamp(alpha, 0.0f, 1.0f),
     };
 
+    // The alpha core hands decorations is alphaValue(WINDOW_ALPHA_ACTIVE) *
+    // fadeAlpha (Renderer.cpp::renderWindow's fullAlpha). Folding the
+    // active/inactive opacity rule into the glass coverage let the *real*
+    // unrefracted background bleed through wherever the window is
+    // translucent (compA < 1) - a ghost double-image at the refracted rim,
+    // where warped and true content visibly differ. A translucent window
+    // should reveal the opaque glass behind it, not the raw background, so
+    // divide the active/inactive factor back out and keep only fade (window
+    // open/close animations must still thin the glass, or closing windows
+    // would pop). Mirrors core's own opaque-rule override on renderdata.alpha.
+    float activeAlpha = 1.0f;
+    try {
+        if (!(window->m_ruleApplicator && window->m_ruleApplicator->opaque().valueOrDefault()))
+            activeAlpha = window->alphaValue(Desktop::View::WINDOW_ALPHA_ACTIVE);
+    } catch (...) {}
+    const float fadeOnlyAlpha = activeAlpha > 0.001f ? std::clamp(alpha / activeAlpha, 0.0f, 1.0f) : alpha;
+
     GlassRenderer::applyGlassEffect(m_sampleFramebuffer, target,
-                                     rawBox, transformBox, alpha,
-                                     cornerRadius, roundingPower, m_samplePaddingRatio, ctx,
-                                     &maskInfo, m_sharpFramebuffer);
+                                     rawBox, transformBox, fadeOnlyAlpha,
+                                     cornerRadius, roundingPower, m_sampleLayout, ctx,
+                                     &maskInfo, m_sharpFramebuffer,
+                                     /* refractOutward = */ window->m_isFloating);
 }
