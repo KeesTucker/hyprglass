@@ -183,21 +183,25 @@ void CWindowGlassState::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
     int monitorWidth  = static_cast<int>(monitor->m_transformedSize.x);
     int monitorHeight = static_cast<int>(monitor->m_transformedSize.y);
 
-    // 10-bit RGB + alpha: on a 10-bit monitor (currentFormat XBGR2101010), forcing
+    // 16-bit float RGBA: on a 10-bit monitor (currentFormat XBGR2101010), forcing
     // ARGB8888 here quantized real window content to 8-bit on its way through this
     // redirect, even though the rest of the pipeline (blur path) stays 10-bit.
-    // ABGR2101010 is XBGR2101010's own alpha-carrying counterpart per Hyprland's
-    // NFormatUtils::alphaFormat(), and GL_RGB10_A2 is a mandatory-support renderable
-    // format in GLES 3.0+ (unlike a 16F float format, no optional-extension gamble).
-    // The mask shader's alpha use isn't just a coarse presence/absence test - it also
-    // unpremultiplies/blends on surfacePixel.a - but opaque content (the vast majority
-    // of a window) lands exactly on the top 2-bit level (1.0) with no quantization
-    // error either way.
+    // ABGR16161616F (GL_RGBA16F) gives full-precision RGB *and* alpha - no
+    // quantization at all, unlike ABGR2101010's 2-bit alpha (4 levels), which
+    // still coarsens the mask shader's unpremultiply/blend math on
+    // antialiased/translucent content even though opaque content is unaffected
+    // either way. Confirmed empirically (not assumed) that GL_RGBA16F is
+    // color-renderable on this GPU/driver via a standalone EGL/GLES probe
+    // outside Hyprland (GL_EXT_color_buffer_half_float and
+    // GL_EXT_color_buffer_float both present, glTexImage2D + framebuffer
+    // completeness both succeed) before relying on it here - an unsupported
+    // float format would hit CGLFramebuffer::internalAlloc()'s
+    // framebuffer-incomplete RASSERT, i.e. another whole-session crash.
     if (!m_surfaceTempFramebuffer)
         m_surfaceTempFramebuffer = g_pHyprRenderer->createFB("hyprglass-window-temp");
 
     if (m_surfaceTempFramebuffer->m_size.x != monitorWidth || m_surfaceTempFramebuffer->m_size.y != monitorHeight)
-        m_surfaceTempFramebuffer->alloc(monitorWidth, monitorHeight, DRM_FORMAT_ABGR2101010);
+        m_surfaceTempFramebuffer->alloc(monitorWidth, monitorHeight, DRM_FORMAT_ABGR16161616F);
 
     m_savedCurrentFB = source;
 

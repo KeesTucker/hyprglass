@@ -178,15 +178,28 @@ void CGlassLayerSurface::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
     int monitorWidth  = static_cast<int>(monitor->m_transformedSize.x);
     int monitorHeight = static_cast<int>(monitor->m_transformedSize.y);
 
-    // Force ARGB8888 for the temp FBO: the mask shader needs alpha precision.
-    // Monitor FBOs use XRGB formats (no usable alpha); XRGB2101010 (10-bit)
-    // has only 2-bit alpha, quantizing values below ~0.17 to zero and breaking
-    // the mask discard for low-opacity layers.
+    // 16-bit float RGBA for the temp FBO: the mask shader needs alpha precision,
+    // and monitor FBOs use XRGB formats (no usable alpha). ARGB8888 used to be
+    // forced here, quantizing content to 8-bit even on a 10-bit monitor.
+    // ABGR2101010 (10-bit RGB) was considered and rejected for this path
+    // specifically: its 2-bit alpha (4 levels) quantizes values below ~0.17 to
+    // zero, breaking the mask discard for low-opacity layers - layers commonly
+    // fade their own alpha (see isAnimating's m_alpha->isBeingAnimated() check
+    // above), so a fading layer would pop to fully invisible partway through
+    // instead of smoothly fading. ABGR16161616F (GL_RGBA16F) avoids that
+    // entirely - full-precision alpha, no quantization at any opacity level.
+    // Confirmed empirically (not assumed) that GL_RGBA16F is color-renderable
+    // on this GPU/driver via a standalone EGL/GLES probe outside Hyprland
+    // (GL_EXT_color_buffer_half_float and GL_EXT_color_buffer_float both
+    // present, glTexImage2D + framebuffer completeness both succeed) before
+    // relying on it here - an unsupported float format would hit
+    // CGLFramebuffer::internalAlloc()'s framebuffer-incomplete RASSERT, i.e.
+    // another whole-session crash.
     if (!m_surfaceTempFramebuffer)
         m_surfaceTempFramebuffer = g_pHyprRenderer->createFB("hyprglass-layer-temp");
 
     if (m_surfaceTempFramebuffer->m_size.x != monitorWidth || m_surfaceTempFramebuffer->m_size.y != monitorHeight)
-        m_surfaceTempFramebuffer->alloc(monitorWidth, monitorHeight, DRM_FORMAT_ARGB8888);
+        m_surfaceTempFramebuffer->alloc(monitorWidth, monitorHeight, DRM_FORMAT_ABGR16161616F);
 
     m_savedCurrentFB = source;
 
