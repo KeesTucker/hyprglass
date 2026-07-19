@@ -33,7 +33,7 @@ inline constexpr int ALPHA_PROBE_SIZE = 128;
 // longer dimension is applied to both axes before independently clamping
 // each to [JFA_MIN_DIM, JFA_MAX_DIM].
 inline constexpr int JFA_DOWNSCALE = 1;   // content-box px -> field texels
-inline constexpr int JFA_MAX_DIM   = 512; // cap on the buffer's longer side;
+inline constexpr int JFA_MAX_DIM   = 1024; // cap on the buffer's longer side;
                                            // cost-control only (JFA passes
                                            // are still tiny next to the
                                            // existing multi-iteration blur).

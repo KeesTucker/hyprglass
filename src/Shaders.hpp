@@ -174,7 +174,18 @@ vec2 refractionDir(vec2 uv) {
 // smooth. Widening the step low-pass-filters that quantization out of the
 // gradient at the cost of a little directional sharpness right at concave
 // corners.
-const float GRADIENT_STEP_TEXELS = 2.5;
+//
+// It also does double duty smoothing the seam between separate silhouette
+// lobes (e.g. two of a bar's pill-shaped module groups sitting close
+// together, or the narrow waist of a dumbbell-shaped mask): each lobe's
+// field points toward its own nearest boundary, so right where two lobes
+// meet or nearly meet, the direction flips rather than blending - a visible
+// hard crease between what look like two independent glass bulges. A wider
+// step averages samples from across that flip instead of straddling it by
+// a texel or two, turning the crease into a gradual blend. JFA_MAX_DIM/
+// JFA_DOWNSCALE (GlassRenderer.hpp) put the field close to 1:1 with real
+// pixels for most layers, so this is roughly a real-pixel blend radius.
+const float GRADIENT_STEP_TEXELS = 14.0;
 
 vec2 refractionDirField(vec2 uv) {
     vec2 texel = (GRADIENT_STEP_TEXELS / distFieldSize);
@@ -222,7 +233,14 @@ void main() {
     // Multiplying by a constant instead makes the refraction band the same
     // absolute size on every window/layer regardless of its own dimensions.
     const float EDGE_THICKNESS_REFERENCE_PX = 1000.0;
-    float bezelWidthPx = edgeThickness * EDGE_THICKNESS_REFERENCE_PX;
+    // ...but clamped to a fraction of the box's own minDim, so a box smaller
+    // than the fixed band (a small popup, notification, or a layer whose
+    // real alpha content is tiny - fullSize here is already the tightened
+    // alpha content box, not the reported box) still keeps a flat, readable
+    // interior instead of the bezel swallowing the whole thing and going
+    // wild edge-to-edge.
+    const float MAX_BEZEL_FRACTION_OF_BOX = 0.35;
+    float bezelWidthPx = min(edgeThickness * EDGE_THICKNESS_REFERENCE_PX, minDim * MAX_BEZEL_FRACTION_OF_BOX);
 
     // ========================================
     // EDGE PROXIMITY + DIRECTION
