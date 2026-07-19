@@ -56,6 +56,7 @@ bool CShaderManager::compileGlassShader() {
     glassUniforms.distField           = glGetUniformLocation(program, "distField");
     glassUniforms.distFieldSize       = glGetUniformLocation(program, "distFieldSize");
     glassUniforms.useDistanceField    = glGetUniformLocation(program, "useDistanceField");
+    glassUniforms.gradientStepTexels  = glGetUniformLocation(program, "gradientStepTexels");
 
     return true;
 }

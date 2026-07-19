@@ -49,6 +49,19 @@ namespace GlobalDefaults {
     inline constexpr float   EDGE_THICKNESS       = 0.05f;
     inline constexpr int64_t TINT_COLOR           = 0x8899aa22;
     inline constexpr float   LENS_DISTORTION      = 0.5f;
+
+    // Layers only. Tuned live (2026-07-19) chasing a hard crease where two
+    // separate silhouette lobes (e.g. adjacent bar pill modules) touch -
+    // see refractionDirField's comment in Shaders.hpp.
+    // Gradient finite-difference step, in JFA field texels (roughly real
+    // pixels - see DISTANCE_FIELD_RESOLUTION below). Wider blends the seam
+    // between separate lobes more smoothly at the cost of a little
+    // directional sharpness at real concave corners.
+    inline constexpr float   LAYERS_REFRACTION_BLEND           = 14.0f;
+    // Cap on the JFA distance field's longer side, in texels. Higher gives
+    // crisper edges/refraction on large layers (walked 256 -> 512 -> 1024
+    // chasing choppy/staircased edges) at more GPU cost per frame.
+    inline constexpr int64_t LAYERS_DISTANCE_FIELD_RESOLUTION  = 1024;
 } // namespace GlobalDefaults
 
 // ── Built-in presets ─────────────────────────────────────────────────────────

@@ -275,10 +275,13 @@ void blurBackground(SP<Render::IFramebuffer> sampleFramebuffer, float radius, in
 
 std::optional<SDistanceFieldResult> computeDistanceField(SDistanceFieldBuffers& buffers, SP<Render::IFramebuffer> maskSource,
                                                            const SMaskInfo& mask, CBox contentBox,
-                                                           GLuint callerFramebufferID, int viewportWidth, int viewportHeight) {
+                                                           GLuint callerFramebufferID, int viewportWidth, int viewportHeight,
+                                                           int maxFieldDim) {
     auto& shaderManager = g_pGlobalState->shaderManager;
     if (!maskSource || !shaderManager.isInitialized() || contentBox.w <= 0.0 || contentBox.h <= 0.0)
         return std::nullopt;
+
+    const int jfaMaxDim = std::clamp(maxFieldDim, JFA_MIN_DIM, JFA_HARD_MAX_DIM);
 
     // Aspect-preserving sizing: one scale factor derived from the longer
     // dimension is applied to both axes before independently clamping, so
@@ -286,9 +289,9 @@ std::optional<SDistanceFieldResult> computeDistanceField(SDistanceFieldBuffers& 
     // stays uniform across x/y - a squashed aspect would distort the
     // gradient direction refractionDirField derives from this buffer.
     const double longer = std::max(contentBox.w, contentBox.h);
-    const double scale  = std::min(1.0 / JFA_DOWNSCALE, static_cast<double>(JFA_MAX_DIM) / longer);
-    const int    fieldW = std::clamp(static_cast<int>(std::lround(contentBox.w * scale)), JFA_MIN_DIM, JFA_MAX_DIM);
-    const int    fieldH = std::clamp(static_cast<int>(std::lround(contentBox.h * scale)), JFA_MIN_DIM, JFA_MAX_DIM);
+    const double scale  = std::min(1.0 / JFA_DOWNSCALE, static_cast<double>(jfaMaxDim) / longer);
+    const int    fieldW = std::clamp(static_cast<int>(std::lround(contentBox.w * scale)), JFA_MIN_DIM, jfaMaxDim);
+    const int    fieldH = std::clamp(static_cast<int>(std::lround(contentBox.h * scale)), JFA_MIN_DIM, jfaMaxDim);
 
     ensureJfaBuffer(buffers.bufA, "hyprglass-jfa-a", fieldW, fieldH);
     ensureJfaBuffer(buffers.bufB, "hyprglass-jfa-b", fieldW, fieldH);
@@ -381,7 +384,8 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
                        float alpha, float cornerRadius, float roundingPower,
                        const SSampleLayout& sampleLayout, const SResolveContext& resolveContext,
                        const SMaskInfo* mask, SP<Render::IFramebuffer> sharpFramebuffer,
-                       bool refractOutward, const SDistanceFieldResult* distField) {
+                       bool refractOutward, const SDistanceFieldResult* distField,
+                       float gradientStepTexels) {
     if (!sampleFramebuffer || !targetFramebuffer)
         return;
 
@@ -504,6 +508,7 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
         glUniform2f(uniforms.distFieldSize,
             static_cast<float>(distField->fieldSize.x),
             static_cast<float>(distField->fieldSize.y));
+        glUniform1f(uniforms.gradientStepTexels, gradientStepTexels);
     } else {
         glUniform1i(uniforms.useDistanceField, 0);
     }

@@ -329,6 +329,14 @@ void CGlassLayerSurface::compositeAndRestore(PHLMONITOR monitor, float alpha) {
         .alphaThreshold    = maskThreshold,
     };
 
+    const auto& config = g_pGlobalState->config;
+    const int   fieldResolution = config.layersDistanceFieldResolution && *config.layersDistanceFieldResolution
+        ? static_cast<int>(**config.layersDistanceFieldResolution)
+        : static_cast<int>(GlobalDefaults::LAYERS_DISTANCE_FIELD_RESOLUTION);
+    const float refractionBlend = config.layersRefractionBlend && *config.layersRefractionBlend
+        ? static_cast<float>(**config.layersRefractionBlend)
+        : GlobalDefaults::LAYERS_REFRACTION_BLEND;
+
     // Non-rectangular content (e.g. waybar's separate pill-shaped module
     // groups): derive a per-pixel distance field from this frame's alpha
     // mask instead of using the closed-form box SDF. Only attempted when
@@ -339,7 +347,7 @@ void CGlassLayerSurface::compositeAndRestore(PHLMONITOR monitor, float alpha) {
     if (contentBox) {
         distField = GlassRenderer::computeDistanceField(m_distFieldBuffers, m_surfaceTempFramebuffer, maskInfo, effectiveTransformBox,
                                                           dynamic_cast<Render::GL::CGLFramebuffer*>(target.get())->getFBID(),
-                                                          monitorWidth, monitorHeight);
+                                                          monitorWidth, monitorHeight, fieldResolution);
     }
 
     // The glass shader composites both the glass effect and the surface content
@@ -351,5 +359,6 @@ void CGlassLayerSurface::compositeAndRestore(PHLMONITOR monitor, float alpha) {
                                      cornerRadius, roundingPower, effectiveLayout, ctx,
                                      &maskInfo, m_sharpFramebuffer,
                                      /* refractOutward = */ true,
-                                     distField ? &*distField : nullptr);
+                                     distField ? &*distField : nullptr,
+                                     refractionBlend);
 }

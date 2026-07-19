@@ -44,6 +44,8 @@ void registerConfig(HANDLE handle) {
     addConfigValue<Config::Values::String>(handle, ConfigKeys::LAYERS_PRESET, Config::STRING{});
     addConfigValue<Config::Values::String>(handle, ConfigKeys::LAYERS_NAMESPACE_PRESETS, Config::STRING{});
     addConfigValue<Config::Values::String>(handle, ConfigKeys::LAYERS_NAMESPACE_MASK_THRESHOLDS, Config::STRING{});
+    addConfigValue<Config::Values::Float>(handle, ConfigKeys::LAYERS_REFRACTION_BLEND, Config::FLOAT{GlobalDefaults::LAYERS_REFRACTION_BLEND});
+    addConfigValue<Config::Values::Int>(handle, ConfigKeys::LAYERS_DISTANCE_FIELD_RESOLUTION, Config::INTEGER{GlobalDefaults::LAYERS_DISTANCE_FIELD_RESOLUTION});
 
     // Global level — real defaults for effect settings,
     // sentinel for theme-sensitive settings (fallback to hardcoded theme defaults)
@@ -162,6 +164,8 @@ void initConfigPointers(HANDLE handle, SPluginConfig& config) {
     config.layersPreset            = getStringPtr(handle, ConfigKeys::LAYERS_PRESET);
     config.layersNamespacePresets         = getStringPtr(handle, ConfigKeys::LAYERS_NAMESPACE_PRESETS);
     config.layersNamespaceMaskThresholds = getStringPtr(handle, ConfigKeys::LAYERS_NAMESPACE_MASK_THRESHOLDS);
+    config.layersRefractionBlend         = getStaticPtr<Hyprlang::FLOAT>(handle, ConfigKeys::LAYERS_REFRACTION_BLEND);
+    config.layersDistanceFieldResolution = getStaticPtr<Hyprlang::INT>(handle, ConfigKeys::LAYERS_DISTANCE_FIELD_RESOLUTION);
 
     initOverridablePointers(handle, config.global,
         ConfigKeys::BLUR_STRENGTH, ConfigKeys::BLUR_ITERATIONS,

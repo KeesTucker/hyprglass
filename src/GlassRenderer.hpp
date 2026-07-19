@@ -1,5 +1,6 @@
 #pragma once
 
+#include "BuiltInPresets.hpp"
 #include "PluginConfig.hpp"
 
 #include <GLES3/gl32.h>
@@ -31,13 +32,15 @@ inline constexpr int ALPHA_PROBE_SIZE = 128;
 // preserving - a squashed aspect would distort the gradient direction used
 // for refractionDir - so one scale factor derived from the content box's
 // longer dimension is applied to both axes before independently clamping
-// each to [JFA_MIN_DIM, JFA_MAX_DIM].
-inline constexpr int JFA_DOWNSCALE = 1;   // content-box px -> field texels
-inline constexpr int JFA_MAX_DIM   = 1024; // cap on the buffer's longer side;
-                                           // cost-control only (JFA passes
-                                           // are still tiny next to the
-                                           // existing multi-iteration blur).
-inline constexpr int JFA_MIN_DIM = 8;
+// each to [JFA_MIN_DIM, maxFieldDim]. The upper cap itself is exposed as
+// layers:distance_field_resolution (config; default GlobalDefaults::
+// LAYERS_DISTANCE_FIELD_RESOLUTION) and passed into computeDistanceField
+// per-call, clamped against JFA_HARD_MAX_DIM as a safety ceiling - cost-
+// control only (JFA passes are still tiny next to the existing
+// multi-iteration blur).
+inline constexpr int JFA_DOWNSCALE   = 1; // content-box px -> field texels
+inline constexpr int JFA_MIN_DIM     = 8;
+inline constexpr int JFA_HARD_MAX_DIM = 2048;
 
 // Layers only: alpha mask from the temp FBO that captured the rendered surface.
 // Constrains the glass effect to regions where the layer has visible content.
@@ -100,9 +103,13 @@ struct SDistanceFieldResult {
 // contentBox. Returns std::nullopt when contentBox is degenerate - callers
 // should fall back to the closed-form box SDF, same convention as
 // computeAlphaContentBox's std::nullopt fallback.
+// maxFieldDim: caller-resolved layers:distance_field_resolution (config),
+// clamped internally to [JFA_MIN_DIM, a hardcoded safety ceiling] so a bad
+// config value can't blow up the buffer allocation.
 std::optional<SDistanceFieldResult> computeDistanceField(SDistanceFieldBuffers& buffers, SP<Render::IFramebuffer> maskSource,
                                                            const SMaskInfo& mask, CBox contentBox,
-                                                           GLuint callerFramebufferID, int viewportWidth, int viewportHeight);
+                                                           GLuint callerFramebufferID, int viewportWidth, int viewportHeight,
+                                                           int maxFieldDim);
 
 // sharpFramebuffer, when non-null, receives a full-resolution unblurred copy
 // of the same padded region (always full-res, even when the blur sample is
@@ -132,7 +139,8 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
                        const SMaskInfo* mask = nullptr,
                        SP<Render::IFramebuffer> sharpFramebuffer = nullptr,
                        bool refractOutward = true,
-                       const SDistanceFieldResult* distField = nullptr);
+                       const SDistanceFieldResult* distField = nullptr,
+                       float gradientStepTexels = GlobalDefaults::LAYERS_REFRACTION_BLEND);
 
 // Layers only: tight axis-aligned bounding box (in the same buffer/pixel
 // space as searchBox) of alphaSource's non-transparent content within

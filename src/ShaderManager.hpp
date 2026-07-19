@@ -36,6 +36,7 @@ struct SGlassUniforms {
     GLint distField = -1;
     GLint distFieldSize = -1;
     GLint useDistanceField = -1;
+    GLint gradientStepTexels = -1;
 };
 
 struct SBlurUniforms {

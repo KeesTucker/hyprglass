@@ -78,6 +78,7 @@ uniform float maskAlphaThreshold;
 uniform sampler2D distField;
 uniform vec2 distFieldSize;
 uniform int useDistanceField;
+uniform float gradientStepTexels; // see refractionDirField()
 
 in vec2 v_texcoord;
 layout(location = 0) out vec4 fragColor;
@@ -182,13 +183,13 @@ vec2 refractionDir(vec2 uv) {
 // meet or nearly meet, the direction flips rather than blending - a visible
 // hard crease between what look like two independent glass bulges. A wider
 // step averages samples from across that flip instead of straddling it by
-// a texel or two, turning the crease into a gradual blend. JFA_MAX_DIM/
-// JFA_DOWNSCALE (GlassRenderer.hpp) put the field close to 1:1 with real
-// pixels for most layers, so this is roughly a real-pixel blend radius.
-const float GRADIENT_STEP_TEXELS = 14.0;
-
+// a texel or two, turning the crease into a gradual blend. layers:
+// distance_field_resolution / the fixed JFA_DOWNSCALE (GlassRenderer.hpp)
+// put the field close to 1:1 with real pixels for most layers, so this is
+// roughly a real-pixel blend radius. gradientStepTexels itself is exposed
+// as layers:refraction_blend.
 vec2 refractionDirField(vec2 uv) {
-    vec2 texel = (GRADIENT_STEP_TEXELS / distFieldSize);
+    vec2 texel = (gradientStepTexels / distFieldSize);
     float dxp = getDistanceFieldSDF(uv + vec2(texel.x, 0.0));
     float dxn = getDistanceFieldSDF(uv - vec2(texel.x, 0.0));
     float dyp = getDistanceFieldSDF(uv + vec2(0.0, texel.y));
@@ -239,7 +240,7 @@ void main() {
     // alpha content box, not the reported box) still keeps a flat, readable
     // interior instead of the bezel swallowing the whole thing and going
     // wild edge-to-edge.
-    const float MAX_BEZEL_FRACTION_OF_BOX = 0.35;
+    const float MAX_BEZEL_FRACTION_OF_BOX = 0.30;
     float bezelWidthPx = min(edgeThickness * EDGE_THICKNESS_REFERENCE_PX, minDim * MAX_BEZEL_FRACTION_OF_BOX);
 
     // ========================================
