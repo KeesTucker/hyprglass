@@ -44,7 +44,8 @@ uniform float refractionDirSign; // +1: rim samples outward (floating windows,
                                  // outward would pull in neighboring windows)
 uniform vec2 fullSize;
 uniform float radius;
-uniform vec2 uvPadding;
+uniform vec2 uvOffset; // maps this box's local UV [0,1] to the padded sample texture's UV
+uniform vec2 uvScale;
 
 uniform float refractionStrength;
 uniform float chromaticAberration;
@@ -78,7 +79,7 @@ layout(location = 0) out vec4 fragColor;
 // ============================================================================
 
 vec2 toTexUV(vec2 wuv) {
-    return wuv * (1.0 - 2.0 * uvPadding) + uvPadding;
+    return wuv * uvScale + uvOffset;
 }
 
 vec2 clampValid(vec2 tuv) {

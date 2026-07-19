@@ -26,6 +26,7 @@ class CGlassLayerSurface {
     SP<Render::IFramebuffer> m_sampleFramebuffer;
     SP<Render::IFramebuffer> m_sharpFramebuffer;
     SP<Render::IFramebuffer> m_surfaceTempFramebuffer;
+    SP<Render::IFramebuffer> m_alphaProbeFramebuffer;
     GlassRenderer::SSampleLayout m_sampleLayout;
     bool         m_hasCachedSample = false;
 

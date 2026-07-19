@@ -2,6 +2,7 @@
 #include "BuiltInPresets.hpp"
 #include "Globals.hpp"
 
+#include <algorithm>
 #include <array>
 #include <GLES3/gl32.h>
 #include <hyprland/src/render/OpenGL.hpp>
@@ -69,10 +70,15 @@ void sampleBackground(SP<Render::IFramebuffer>& sampleFramebuffer, SP<Render::IF
     if (srcX1 > framebufferWidth)  { dstX1 -= static_cast<int>((srcX1 - framebufferWidth) * xScale);  srcX1 = framebufferWidth; }
     if (srcY1 > framebufferHeight) { dstY1 -= static_cast<int>((srcY1 - framebufferHeight) * yScale); srcY1 = framebufferHeight; }
 
-    // Padding ratio is relative to the logical content area (resolution-independent)
-    outLayout.paddingRatio = Vector2D(
+    // Offset/scale are relative to the logical content area (resolution-independent):
+    // this box's local UV [0,1] carves out the non-padded interior of the captured texture.
+    outLayout.uvOffset = Vector2D(
         static_cast<double>(pad) / fullWidth,
         static_cast<double>(pad) / fullHeight
+    );
+    outLayout.uvScale = Vector2D(
+        static_cast<double>(box.width) / fullWidth,
+        static_cast<double>(box.height) / fullHeight
     );
 
     // Valid-content bounds in [0,1] UV of the padded region: where the source
@@ -304,9 +310,12 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
     glUniform1f(uniforms.tintAlpha,
         static_cast<float>(tintColorValue & 0xFF) / 255.0f);
 
-    glUniform2f(uniforms.uvPadding,
-        static_cast<float>(sampleLayout.paddingRatio.x),
-        static_cast<float>(sampleLayout.paddingRatio.y));
+    glUniform2f(uniforms.uvOffset,
+        static_cast<float>(sampleLayout.uvOffset.x),
+        static_cast<float>(sampleLayout.uvOffset.y));
+    glUniform2f(uniforms.uvScale,
+        static_cast<float>(sampleLayout.uvScale.x),
+        static_cast<float>(sampleLayout.uvScale.y));
     glUniform4f(uniforms.validBounds,
         static_cast<float>(sampleLayout.validMin.x),
         static_cast<float>(sampleLayout.validMin.y),
@@ -338,6 +347,93 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
     g_pHyprOpenGL->scissor(rawBox);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     g_pHyprOpenGL->scissor(nullptr);
+}
+
+std::optional<CBox> computeAlphaContentBox(SP<Render::IFramebuffer>& probeFramebuffer,
+                                            SP<Render::IFramebuffer> alphaSource,
+                                            CBox searchBox, float alphaThreshold) {
+    if (!alphaSource || searchBox.w <= 0.0 || searchBox.h <= 0.0)
+        return std::nullopt;
+
+    if (!probeFramebuffer)
+        probeFramebuffer = g_pHyprRenderer->createFB("hyprglass-alpha-probe");
+
+    if (probeFramebuffer->m_size.x != ALPHA_PROBE_SIZE || probeFramebuffer->m_size.y != ALPHA_PROBE_SIZE)
+        probeFramebuffer->alloc(ALPHA_PROBE_SIZE, ALPHA_PROBE_SIZE);
+
+    // Same leaked-scissor hazard as sampleBackground's blit - the render pass
+    // scissors each element to its damage region, which clips this blit's
+    // DRAW framebuffer if left enabled.
+    g_pHyprOpenGL->setCapStatus(GL_SCISSOR_TEST, false);
+
+    // GPU-side downsample of just the searched region's alpha. Nearest
+    // filtering: linear would blend across the true content edge, softening
+    // alpha below alphaThreshold right where content actually starts and
+    // shrinking the detected box instead of just coarsening its resolution.
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, dynamic_cast<Render::GL::CGLFramebuffer*>(alphaSource.get())->getFBID());
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, dynamic_cast<Render::GL::CGLFramebuffer*>(probeFramebuffer.get())->getFBID());
+    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glBlitFramebuffer(static_cast<int>(searchBox.x), static_cast<int>(searchBox.y),
+                      static_cast<int>(searchBox.x + searchBox.w), static_cast<int>(searchBox.y + searchBox.h),
+                      0, 0, ALPHA_PROBE_SIZE, ALPHA_PROBE_SIZE,
+                      GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
+    std::array<uint8_t, ALPHA_PROBE_SIZE * ALPHA_PROBE_SIZE * 4> pixels;
+    glBindFramebuffer(GL_FRAMEBUFFER, dynamic_cast<Render::GL::CGLFramebuffer*>(probeFramebuffer.get())->getFBID());
+    glReadPixels(0, 0, ALPHA_PROBE_SIZE, ALPHA_PROBE_SIZE, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+
+    const uint8_t threshold = static_cast<uint8_t>(std::clamp(alphaThreshold, 0.0f, 1.0f) * 255.0f);
+
+    int minX = ALPHA_PROBE_SIZE, minY = ALPHA_PROBE_SIZE, maxX = -1, maxY = -1;
+    for (int y = 0; y < ALPHA_PROBE_SIZE; y++) {
+        for (int x = 0; x < ALPHA_PROBE_SIZE; x++) {
+            if (pixels[(y * ALPHA_PROBE_SIZE + x) * 4 + 3] > threshold) {
+                minX = std::min(minX, x);
+                maxX = std::max(maxX, x);
+                minY = std::min(minY, y);
+                maxY = std::max(maxY, y);
+            }
+        }
+    }
+
+    if (maxX < minX || maxY < minY)
+        return std::nullopt;
+
+    // Map probe texels back to searchBox's pixel space, padded by one texel on
+    // each side: the probe's own downsample can soften an edge texel just
+    // under threshold even where real content starts.
+    const double texelW = searchBox.w / ALPHA_PROBE_SIZE;
+    const double texelH = searchBox.h / ALPHA_PROBE_SIZE;
+    const int    padMinX = std::max(0, minX - 1);
+    const int    padMinY = std::max(0, minY - 1);
+    const int    padMaxX = std::min(ALPHA_PROBE_SIZE, maxX + 2);
+    const int    padMaxY = std::min(ALPHA_PROBE_SIZE, maxY + 2);
+
+    CBox contentBox{
+        searchBox.x + padMinX * texelW,
+        searchBox.y + padMinY * texelH,
+        (padMaxX - padMinX) * texelW,
+        (padMaxY - padMinY) * texelH,
+    };
+
+    contentBox = contentBox.intersection(searchBox).noNegativeSize().round();
+    if (contentBox.w <= 0.0 || contentBox.h <= 0.0)
+        return std::nullopt;
+
+    return contentBox;
+}
+
+SSampleLayout narrowSampleLayout(const SSampleLayout& base, const CBox& capturedBox, const CBox& contentBox) {
+    if (capturedBox.w <= 0.0 || capturedBox.h <= 0.0)
+        return base;
+
+    SSampleLayout result = base;
+    result.uvOffset.x = base.uvOffset.x + base.uvScale.x * (contentBox.x - capturedBox.x) / capturedBox.w;
+    result.uvOffset.y = base.uvOffset.y + base.uvScale.y * (contentBox.y - capturedBox.y) / capturedBox.h;
+    result.uvScale.x  = base.uvScale.x * contentBox.w / capturedBox.w;
+    result.uvScale.y  = base.uvScale.y * contentBox.h / capturedBox.h;
+    return result;
 }
 
 } // namespace GlassRenderer

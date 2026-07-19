@@ -18,6 +18,19 @@ static CBox transformedLayerBox(CBox pixelBox, PHLMONITOR monitor) {
     return pixelBox;
 }
 
+// Inverse of transformedLayerBox, for mapping a box already in transformed/
+// buffer space (e.g. content bounds read back from the temp FBO, which is
+// laid out in buffer space) back to the raw pre-transform space rawBox and
+// LayerGeometry::computeLayerBox use. Mirrors transformedLayerBox's own
+// transform+dimension pairing exactly, just reversed - only exercised on
+// monitors with a non-normal transform (rotated/flipped), which this
+// plugin's layer hooks have no test coverage against on real hardware.
+static CBox untransformedLayerBox(CBox transformedPixelBox, PHLMONITOR monitor) {
+    const auto transform = Math::wlTransformToHyprutils(monitor->m_transform);
+    transformedPixelBox.transform(transform, monitor->m_pixelSize.x, monitor->m_pixelSize.y).noNegativeSize().round();
+    return transformedPixelBox;
+}
+
 CGlassLayerSurface::CGlassLayerSurface(PHLLS layerSurface)
     : m_layerSurface(layerSurface) {
 }
@@ -286,19 +299,41 @@ void CGlassLayerSurface::compositeAndRestore(PHLMONITOR monitor, float alpha) {
     // makes the mask fall below threshold early and the glass blinks off.
     maskThreshold *= std::clamp(alpha, 0.0f, 1.0f);
 
+    // Some layers (e.g. click-catching launchers) report their full bounds as
+    // the layer geometry but only draw a small centered panel, leaving the
+    // rest transparent. Using the reported box for the SDF/refraction geometry
+    // then puts the "glass edge" out at the invisible reported boundary,
+    // producing a flat, undistorted look over the actual visible content. Detect
+    // the real content's tight bounds from this frame's just-rendered alpha (the
+    // temp FBO already holds it - compositeAndRestore runs after Hyprland's real
+    // renderLayer call) and use that for the SDF/draw geometry instead, so
+    // refraction/fresnel/specular hug the real edges with no extra frame of lag.
+    // Falls back to the reported box when nothing is detected (not yet
+    // rendered, or fully hidden this frame).
+    CBox effectiveRawBox                         = rawBox;
+    CBox effectiveTransformBox                   = transformBox;
+    GlassRenderer::SSampleLayout effectiveLayout = m_sampleLayout;
+
+    auto contentBox = GlassRenderer::computeAlphaContentBox(m_alphaProbeFramebuffer, m_surfaceTempFramebuffer, transformBox, maskThreshold);
+    if (contentBox) {
+        effectiveTransformBox = *contentBox;
+        effectiveRawBox       = monitor->m_transform == WL_OUTPUT_TRANSFORM_NORMAL ? *contentBox : untransformedLayerBox(*contentBox, monitor);
+        effectiveLayout       = GlassRenderer::narrowSampleLayout(m_sampleLayout, transformBox, *contentBox);
+    }
+
     GlassRenderer::SMaskInfo maskInfo{
         .textureId         = m_surfaceTempFramebuffer->getTexture()->m_texID,
         .target            = GL_TEXTURE_2D,
-        .uvOffset          = {transformBox.x / monitorWidth, transformBox.y / monitorHeight},
-        .uvScale           = {transformBox.w / monitorWidth, transformBox.h / monitorHeight},
+        .uvOffset          = {effectiveTransformBox.x / monitorWidth, effectiveTransformBox.y / monitorHeight},
+        .uvScale           = {effectiveTransformBox.w / monitorWidth, effectiveTransformBox.h / monitorHeight},
         .alphaThreshold    = maskThreshold,
     };
 
     // The glass shader composites both the glass effect and the surface content
     // in a single pass: glass behind, surface on top, using the temp FBO alpha.
     GlassRenderer::applyGlassEffect(m_sampleFramebuffer, target,
-                                     rawBox, transformBox, alpha,
-                                     cornerRadius, roundingPower, m_sampleLayout, ctx,
+                                     effectiveRawBox, effectiveTransformBox, alpha,
+                                     cornerRadius, roundingPower, effectiveLayout, ctx,
                                      &maskInfo, m_sharpFramebuffer,
                                      /* refractOutward = */ true);
 }

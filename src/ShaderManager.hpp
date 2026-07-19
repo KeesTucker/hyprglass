@@ -11,7 +11,8 @@ struct SGlassUniforms {
     GLint specularStrength = -1;
     GLint glassOpacity = -1;
     GLint edgeThickness = -1;
-    GLint uvPadding = -1;
+    GLint uvOffset = -1;
+    GLint uvScale = -1;
     GLint tintColor = -1;
     GLint tintAlpha = -1;
     GLint lensDistortion = -1;
