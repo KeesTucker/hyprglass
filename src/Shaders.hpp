@@ -71,6 +71,14 @@ uniform vec2 maskUVOffset;
 uniform vec2 maskUVScale;
 uniform float maskAlphaThreshold;
 
+// Layers only: per-pixel distance-to-boundary field replacing the
+// closed-form box SDF below, so refraction hugs the layer's actual alpha
+// silhouette (e.g. multiple separate pill-shaped bar modules) instead of a
+// single rounded rectangle. See getDistanceFieldSDF()/refractionDirField().
+uniform sampler2D distField;
+uniform vec2 distFieldSize;
+uniform int useDistanceField;
+
 in vec2 v_texcoord;
 layout(location = 0) out vec4 fragColor;
 
@@ -115,6 +123,28 @@ float getCornerSDF(vec2 uv) {
 }
 
 // ============================================================================
+// DISTANCE FIELD SDF (layers only, non-rectangular content)
+// distField holds each field texel's nearest-boundary seed as (seedX, seedY,
+// validFlag) in .rgb, computed by the Jump Flooding passes. This is an
+// *unsigned* distance-to-boundary field, not a full signed field: the mask
+// alpha discard earlier in main() already runs before cornerSdf is ever
+// computed, so every fragment reaching this point is already known to be
+// inside the silhouette - there's no "outside" case left to represent, so
+// the extra cost/complexity of seeding and propagating a second direction
+// buys nothing here.
+// ============================================================================
+
+// distField already holds the baked, hardware-bilinear-filterable distance
+// value (see jfafinalize.frag) - not raw seed positions, which must stay
+// nearest-sampled during the JFA passes themselves (see
+// SDistanceFieldBuffers's comment). A direct filtered fetch here is what
+// makes curved silhouettes (e.g. a circle) look smooth instead of
+// staircased at the field's native texel resolution.
+float getDistanceFieldSDF(vec2 uv) {
+    return texture(distField, uv).r;
+}
+
+// ============================================================================
 // REFRACTION DIRECTION
 // Pixel-space direction toward window center — perfectly smooth everywhere,
 // no SDF gradient needed. On straight edges the perpendicular pixel distance
@@ -126,6 +156,35 @@ vec2 refractionDir(vec2 uv) {
     vec2 toCenterPx = (vec2(0.5) - uv) * fullSize;
     float len = length(toCenterPx);
     return len > 0.1 ? toCenterPx / len : vec2(0.0);
+}
+
+// Distance-field equivalent of refractionDir, for non-rectangular layer
+// content. getDistanceFieldSDF is unsigned and increases moving away from
+// the boundary into the interior, so its gradient already points "further
+// inside" - the same direction refractionDir's toCenterPx approximates for
+// a single convex rectangle - no sign flip needed. Same near-singularity
+// guard as refractionDir's dead-center case.
+//
+// The finite-difference step is deliberately several field texels wide
+// (GRADIENT_STEP_TEXELS), not one: bilinear filtering in getDistanceFieldSDF
+// smooths the *value* between texels, but a one-texel-wide difference still
+// differentiates the field at its native JFA grid resolution, so the
+// resulting direction snaps at each texel boundary - visible as a choppy,
+// faceted refraction pattern even where the field's distance value looks
+// smooth. Widening the step low-pass-filters that quantization out of the
+// gradient at the cost of a little directional sharpness right at concave
+// corners.
+const float GRADIENT_STEP_TEXELS = 2.5;
+
+vec2 refractionDirField(vec2 uv) {
+    vec2 texel = (GRADIENT_STEP_TEXELS / distFieldSize);
+    float dxp = getDistanceFieldSDF(uv + vec2(texel.x, 0.0));
+    float dxn = getDistanceFieldSDF(uv - vec2(texel.x, 0.0));
+    float dyp = getDistanceFieldSDF(uv + vec2(0.0, texel.y));
+    float dyn = getDistanceFieldSDF(uv - vec2(0.0, texel.y));
+    vec2 grad = vec2(dxp - dxn, dyp - dyn);
+    float len = length(grad);
+    return len > 0.001 ? grad / len : vec2(0.0);
 }
 
 // ============================================================================
@@ -146,7 +205,7 @@ void main() {
         if (surfacePixel.a < maskAlphaThreshold) discard;
     }
 
-    float cornerSdf = getCornerSDF(uv);
+    float cornerSdf = useDistanceField == 1 ? -getDistanceFieldSDF(uv) : getCornerSDF(uv);
 
     if (cornerSdf > 0.0) {
         discard;
@@ -164,7 +223,7 @@ void main() {
     // inwardDir: pixel-space direction toward center (smooth everywhere)
     // ========================================
     float edgeProximity = exp(cornerSdf / bezelWidthPx);
-    vec2 inwardDir = refractionDir(uv);
+    vec2 inwardDir = useDistanceField == 1 ? refractionDirField(uv) : refractionDir(uv);
 
     // ========================================
     // EDGE REFRACTION
@@ -369,6 +428,143 @@ void main() {
     }
 
     fragColor = result / totalWeight;
+}
+)GLSL"},
+
+    {"jfaseed.frag", R"GLSL(
+#version 300 es
+precision highp float;
+
+/*
+ * Jump Flood Algorithm - seed pass.
+ *
+ * Marks each field texel adjacent to the layer alpha mask's boundary
+ * (inside, with at least one outside 4-neighbor) with its own texel
+ * coordinate, encoded as (seedX, seedY, 1.0=valid) in .rgb. Every other
+ * texel gets .b = 0.0 (no seed yet). The propagation passes (jfastep.frag)
+ * flood these seeds outward until every texel knows its nearest one.
+ */
+
+uniform sampler2D tex; // layer's rendered-surface alpha mask (temp FBO)
+uniform vec2 maskUVOffset; // maps this field's [0,1] uv -> mask texture uv,
+uniform vec2 maskUVScale;  // same transform liquidglass.frag's maskUV uses
+uniform vec2 fieldSize;    // field buffer resolution, in texels
+uniform float maskAlphaThreshold;
+
+in vec2 v_texcoord;
+layout(location = 0) out vec4 fragColor;
+
+void main() {
+    vec2 myTexel = floor(v_texcoord * fieldSize);
+    vec2 stepUV  = maskUVScale / fieldSize; // one field-texel step, in mask UV space
+    vec2 baseUV  = v_texcoord * maskUVScale + maskUVOffset;
+
+    float ownAlpha = texture(tex, clamp(baseUV, 0.001, 0.999)).a;
+    bool  inside    = ownAlpha >= maskAlphaThreshold;
+
+    bool boundary = false;
+    if (inside) {
+        vec2 offs[4] = vec2[](vec2(1.0, 0.0), vec2(-1.0, 0.0), vec2(0.0, 1.0), vec2(0.0, -1.0));
+        for (int i = 0; i < 4; i++) {
+            vec2 nUV = clamp(baseUV + offs[i] * stepUV, 0.001, 0.999);
+            if (texture(tex, nUV).a < maskAlphaThreshold) {
+                boundary = true;
+                break;
+            }
+        }
+    }
+
+    fragColor = vec4(myTexel, boundary ? 1.0 : 0.0, 1.0);
+}
+)GLSL"},
+
+    {"jfastep.frag", R"GLSL(
+#version 300 es
+precision highp float;
+
+/*
+ * Jump Flood Algorithm - propagation pass.
+ *
+ * Standard 9-tap JFA step: for each field texel, look at itself plus 8
+ * neighbors offset by the current step size, and adopt whichever
+ * neighbor's already-known nearest-boundary seed is closest to this
+ * texel's own position. Called with descending power-of-two step sizes
+ * until step=1, converging to an approximate per-texel nearest-boundary
+ * seed.
+ */
+
+uniform sampler2D prevBuf; // previous iteration's (seedX, seedY, validFlag)
+uniform vec2 fieldSize;
+uniform float stepPx;
+
+in vec2 v_texcoord;
+layout(location = 0) out vec4 fragColor;
+
+void main() {
+    vec2 myTexel = floor(v_texcoord * fieldSize);
+
+    float bestDist = 1e20;
+    vec2  bestSeed = vec2(-1.0);
+
+    vec2 offs[9] = vec2[](
+        vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(-1.0, 0.0), vec2(0.0, 1.0), vec2(0.0, -1.0),
+        vec2(1.0, 1.0), vec2(1.0, -1.0), vec2(-1.0, 1.0), vec2(-1.0, -1.0)
+    );
+
+    for (int i = 0; i < 9; i++) {
+        vec2 sampleTexel = myTexel + offs[i] * stepPx;
+        vec2 sampleUV    = (sampleTexel + 0.5) / fieldSize;
+        if (any(lessThan(sampleUV, vec2(0.0))) || any(greaterThan(sampleUV, vec2(1.0))))
+            continue;
+
+        vec3 candidate = texture(prevBuf, sampleUV).rgb;
+        if (candidate.b < 0.5)
+            continue; // that neighbor has no seed yet
+
+        float d = distance(myTexel, candidate.xy);
+        if (d < bestDist) {
+            bestDist = d;
+            bestSeed = candidate.xy;
+        }
+    }
+
+    fragColor = bestSeed.x >= 0.0 ? vec4(bestSeed, 1.0, 1.0) : vec4(0.0, 0.0, 0.0, 0.0);
+}
+)GLSL"},
+
+    {"jfafinalize.frag", R"GLSL(
+#version 300 es
+precision highp float;
+
+/*
+ * Jump Flood Algorithm - finalize pass.
+ *
+ * Converts the last propagation buffer's raw (seedX, seedY, validFlag)
+ * into an actual per-texel distance-to-boundary value, in real pixels.
+ * Written to its own texture left at the default GL_LINEAR filtering
+ * (unlike the seed/step ping-pong buffers, which must stay GL_NEAREST) -
+ * bilinearly interpolating a real distance value between texels is
+ * meaningful and smooths curved silhouettes; interpolating raw seed
+ * *positions* is not and would corrupt them.
+ */
+
+uniform sampler2D prevBuf; // final (seedX, seedY, validFlag) buffer
+uniform vec2 fieldSize;
+uniform float pixelsPerTexel;
+
+in vec2 v_texcoord;
+layout(location = 0) out vec4 fragColor;
+
+void main() {
+    vec2 myTexel = floor(v_texcoord * fieldSize);
+    vec3 seed = texture(prevBuf, v_texcoord).rgb;
+
+    float dist = seed.b < 0.5
+        ? 9999.0 // no boundary seed reached this texel (pathological
+                  // sliver-thin content) - treat as deep interior, flat glass
+        : length(myTexel - seed.xy) * pixelsPerTexel;
+
+    fragColor = vec4(dist, dist, dist, 1.0);
 }
 )GLSL"},
 };

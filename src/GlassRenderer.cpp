@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <GLES3/gl32.h>
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/render/Renderer.hpp>
@@ -12,6 +13,51 @@ namespace GlassRenderer {
 
 static GLuint fbId(const SP<Render::IFramebuffer>& framebuffer) {
     return dynamic_cast<Render::GL::CGLFramebuffer*>(framebuffer.get())->getFBID();
+}
+
+// Fullscreen quad projection: maps VAO positions [0,1] to clip space [-1,1].
+// Same matrix blurBackground uses for its own ping-pong passes.
+static constexpr std::array<float, 9> FULLSCREEN_PROJECTION = {
+    2.0f, 0.0f, 0.0f,
+    0.0f, 2.0f, 0.0f,
+   -1.0f,-1.0f, 1.0f,
+};
+
+static int nextPow2(int v) {
+    int p = 1;
+    while (p < v)
+        p <<= 1;
+    return p;
+}
+
+// Lazily allocates/resizes a JFA ping-pong buffer. RGBA16F (same
+// DRM_FORMAT_ABGR16161616F already proven color-renderable on this GPU/
+// driver by m_surfaceTempFramebuffer, see GlassLayerSurface::
+// sampleAndRedirect) stores exact seed positions with no encoding tricks.
+// Nearest filtering is required, not cosmetic: bilinear blending between
+// adjacent texels would average two unrelated encoded seed coordinates into
+// a meaningless one, silently corrupting the field.
+static void ensureJfaBuffer(SP<Render::IFramebuffer>& fb, const char* name, int w, int h) {
+    if (!fb)
+        fb = g_pHyprRenderer->createFB(name);
+
+    if (static_cast<int>(fb->m_size.x) != w || static_cast<int>(fb->m_size.y) != h) {
+        fb->alloc(w, h, DRM_FORMAT_ABGR16161616F);
+        auto tex = fb->getTexture();
+        tex->setTexParameter(GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        tex->setTexParameter(GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    }
+}
+
+// Same as ensureJfaBuffer, but left at ITexture's default GL_LINEAR - used
+// only for bufFinal, which (unlike bufA/bufB) holds real, meaningfully-
+// interpolatable distance values rather than raw seed positions.
+static void ensureLinearBuffer(SP<Render::IFramebuffer>& fb, const char* name, int w, int h) {
+    if (!fb)
+        fb = g_pHyprRenderer->createFB(name);
+
+    if (static_cast<int>(fb->m_size.x) != w || static_cast<int>(fb->m_size.y) != h)
+        fb->alloc(w, h, DRM_FORMAT_ABGR16161616F);
 }
 
 static void uploadThemeUniforms(const SResolveContext& ctx) {
@@ -227,12 +273,115 @@ void blurBackground(SP<Render::IFramebuffer> sampleFramebuffer, float radius, in
     g_pHyprOpenGL->setViewport(0, 0, viewportWidth, viewportHeight);
 }
 
+std::optional<SDistanceFieldResult> computeDistanceField(SDistanceFieldBuffers& buffers, SP<Render::IFramebuffer> maskSource,
+                                                           const SMaskInfo& mask, CBox contentBox,
+                                                           GLuint callerFramebufferID, int viewportWidth, int viewportHeight) {
+    auto& shaderManager = g_pGlobalState->shaderManager;
+    if (!maskSource || !shaderManager.isInitialized() || contentBox.w <= 0.0 || contentBox.h <= 0.0)
+        return std::nullopt;
+
+    // Aspect-preserving sizing: one scale factor derived from the longer
+    // dimension is applied to both axes before independently clamping, so
+    // pixelsPerTexel (used for the final distance conversion in the shader)
+    // stays uniform across x/y - a squashed aspect would distort the
+    // gradient direction refractionDirField derives from this buffer.
+    const double longer = std::max(contentBox.w, contentBox.h);
+    const double scale  = std::min(1.0 / JFA_DOWNSCALE, static_cast<double>(JFA_MAX_DIM) / longer);
+    const int    fieldW = std::clamp(static_cast<int>(std::lround(contentBox.w * scale)), JFA_MIN_DIM, JFA_MAX_DIM);
+    const int    fieldH = std::clamp(static_cast<int>(std::lround(contentBox.h * scale)), JFA_MIN_DIM, JFA_MAX_DIM);
+
+    ensureJfaBuffer(buffers.bufA, "hyprglass-jfa-a", fieldW, fieldH);
+    ensureJfaBuffer(buffers.bufB, "hyprglass-jfa-b", fieldW, fieldH);
+    ensureLinearBuffer(buffers.bufFinal, "hyprglass-jfa-final", fieldW, fieldH);
+
+    // contentBox and fieldW/fieldH share the same (aspect-preserved) scale
+    // factor, so either axis gives the same ratio - used to convert the
+    // finalize pass's texel-space distances into real pixels.
+    const float pixelsPerTexel = static_cast<float>(contentBox.w) / static_cast<float>(fieldW);
+
+    // Same leaked-scissor hazard as sampleBackground/computeAlphaContentBox's
+    // blits - the render pass scissors each element to its damage region,
+    // which clips these draws' viewport-sized quad if left enabled.
+    g_pHyprOpenGL->setCapStatus(GL_SCISSOR_TEST, false);
+    g_pHyprOpenGL->setViewport(0, 0, fieldW, fieldH);
+
+    // --- Seed pass: mask alpha boundary -> bufA ---
+    {
+        const auto& u      = shaderManager.jfaSeedUniforms;
+        auto        shader = g_pHyprOpenGL->useShader(shaderManager.jfaSeedShader);
+        shader->setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, FULLSCREEN_PROJECTION);
+        shader->setUniformInt(SHADER_TEX, 0);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(mask.target, mask.textureId);
+        glUniform2f(u.maskUVOffset, static_cast<float>(mask.uvOffset.x), static_cast<float>(mask.uvOffset.y));
+        glUniform2f(u.maskUVScale, static_cast<float>(mask.uvScale.x), static_cast<float>(mask.uvScale.y));
+        glUniform1f(u.maskAlphaThreshold, mask.alphaThreshold);
+        glUniform2f(u.fieldSize, static_cast<float>(fieldW), static_cast<float>(fieldH));
+
+        glBindVertexArray(shader->getUniformLocation(SHADER_SHADER_VAO));
+        glBindFramebuffer(GL_FRAMEBUFFER, fbId(buffers.bufA));
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    }
+
+    // --- Propagation: ping-pong bufA <-> bufB, descending power-of-two steps ---
+    SP<Render::IFramebuffer>* src = &buffers.bufA;
+    SP<Render::IFramebuffer>* dst = &buffers.bufB;
+    {
+        const auto& u      = shaderManager.jfaStepUniforms;
+        auto        shader = g_pHyprOpenGL->useShader(shaderManager.jfaStepShader);
+        shader->setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, FULLSCREEN_PROJECTION);
+        glUniform1i(u.prevBuf, 0);
+        glUniform2f(u.fieldSize, static_cast<float>(fieldW), static_cast<float>(fieldH));
+        glBindVertexArray(shader->getUniformLocation(SHADER_SHADER_VAO));
+
+        for (int step = nextPow2(std::max(fieldW, fieldH)) / 2; step >= 1; step /= 2) {
+            glUniform1f(u.stepPx, static_cast<float>(step));
+
+            glActiveTexture(GL_TEXTURE0);
+            (*src)->getTexture()->bind();
+            glBindFramebuffer(GL_FRAMEBUFFER, fbId(*dst));
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+            std::swap(src, dst);
+        }
+    }
+
+    // --- Finalize: bake (*src)'s raw seed positions into a real, linearly-
+    // filterable distance value in bufFinal ---
+    {
+        const auto& u      = shaderManager.jfaFinalizeUniforms;
+        auto        shader = g_pHyprOpenGL->useShader(shaderManager.jfaFinalizeShader);
+        shader->setUniformMatrix3fv(SHADER_PROJ, 1, GL_FALSE, FULLSCREEN_PROJECTION);
+        glUniform1i(u.prevBuf, 0);
+        glUniform2f(u.fieldSize, static_cast<float>(fieldW), static_cast<float>(fieldH));
+        glUniform1f(u.pixelsPerTexel, pixelsPerTexel);
+
+        glActiveTexture(GL_TEXTURE0);
+        (*src)->getTexture()->bind();
+        glBindVertexArray(shader->getUniformLocation(SHADER_SHADER_VAO));
+        glBindFramebuffer(GL_FRAMEBUFFER, fbId(buffers.bufFinal));
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    }
+
+    // Restore caller's GL state without querying (avoids pipeline stalls) -
+    // applyGlassEffect, called right after this, assumes the ambient
+    // viewport is already monitor-sized and never sets it itself.
+    glBindFramebuffer(GL_FRAMEBUFFER, callerFramebufferID);
+    glBindVertexArray(0);
+    g_pHyprOpenGL->setViewport(0, 0, viewportWidth, viewportHeight);
+
+    return SDistanceFieldResult{
+        .texId     = buffers.bufFinal->getTexture()->m_texID,
+        .fieldSize = Vector2D(fieldW, fieldH),
+    };
+}
+
 void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFramebuffer> targetFramebuffer,
                        CBox& rawBox, CBox& transformedBox,
                        float alpha, float cornerRadius, float roundingPower,
                        const SSampleLayout& sampleLayout, const SResolveContext& resolveContext,
                        const SMaskInfo* mask, SP<Render::IFramebuffer> sharpFramebuffer,
-                       bool refractOutward) {
+                       bool refractOutward, const SDistanceFieldResult* distField) {
     if (!sampleFramebuffer || !targetFramebuffer)
         return;
 
@@ -279,6 +428,15 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
         auto sharpTexture = sharpFramebuffer ? sharpFramebuffer->getTexture() : texture;
         glActiveTexture(GL_TEXTURE2);
         sharpTexture->bind();
+        glActiveTexture(GL_TEXTURE0);
+    }
+
+    // Layers only: JFA distance field replacing the box SDF for
+    // non-rectangular content. nullptr (windows, or a layer whose content
+    // box couldn't be resolved this frame) falls back to getCornerSDF.
+    if (distField && distField->texId != 0) {
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D, distField->texId);
         glActiveTexture(GL_TEXTURE0);
     }
 
@@ -338,6 +496,16 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
     } else {
         glUniform1i(uniforms.useMask, 0);
         glUniform1f(uniforms.maskAlphaThreshold, 0.001f);
+    }
+
+    if (distField && distField->texId != 0) {
+        glUniform1i(uniforms.useDistanceField, 1);
+        glUniform1i(uniforms.distField, 3);
+        glUniform2f(uniforms.distFieldSize,
+            static_cast<float>(distField->fieldSize.x),
+            static_cast<float>(distField->fieldSize.y));
+    } else {
+        glUniform1i(uniforms.useDistanceField, 0);
     }
 
     shader->setUniformFloat(SHADER_RADIUS, cornerRadius);

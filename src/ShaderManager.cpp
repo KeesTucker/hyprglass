@@ -53,6 +53,9 @@ bool CShaderManager::compileGlassShader() {
     glassUniforms.maskUVOffset        = glGetUniformLocation(program, "maskUVOffset");
     glassUniforms.maskUVScale         = glGetUniformLocation(program, "maskUVScale");
     glassUniforms.maskAlphaThreshold  = glGetUniformLocation(program, "maskAlphaThreshold");
+    glassUniforms.distField           = glGetUniformLocation(program, "distField");
+    glassUniforms.distFieldSize       = glGetUniformLocation(program, "distFieldSize");
+    glassUniforms.useDistanceField    = glGetUniformLocation(program, "useDistanceField");
 
     return true;
 }
@@ -77,6 +80,70 @@ bool CShaderManager::compileBlurShader() {
     return true;
 }
 
+bool CShaderManager::compileJfaSeedShader() {
+    if (!jfaSeedShader->createProgram(
+            g_pHyprOpenGL->m_shaders->TEXVERTSRC,
+            loadShaderSource("jfaseed.frag"),
+            true
+        )) {
+        HyprlandAPI::addNotification(PHANDLE,
+            std::format("[{}] Failed to compile JFA seed shader", PLUGIN_NAME),
+            CHyprColor{1.0, 0.2, 0.2, 1.0}, 5000);
+        return false;
+    }
+
+    const auto program = jfaSeedShader->program();
+
+    jfaSeedUniforms.maskUVOffset       = glGetUniformLocation(program, "maskUVOffset");
+    jfaSeedUniforms.maskUVScale        = glGetUniformLocation(program, "maskUVScale");
+    jfaSeedUniforms.maskAlphaThreshold = glGetUniformLocation(program, "maskAlphaThreshold");
+    jfaSeedUniforms.fieldSize          = glGetUniformLocation(program, "fieldSize");
+
+    return true;
+}
+
+bool CShaderManager::compileJfaStepShader() {
+    if (!jfaStepShader->createProgram(
+            g_pHyprOpenGL->m_shaders->TEXVERTSRC,
+            loadShaderSource("jfastep.frag"),
+            true
+        )) {
+        HyprlandAPI::addNotification(PHANDLE,
+            std::format("[{}] Failed to compile JFA step shader", PLUGIN_NAME),
+            CHyprColor{1.0, 0.2, 0.2, 1.0}, 5000);
+        return false;
+    }
+
+    const auto program = jfaStepShader->program();
+
+    jfaStepUniforms.prevBuf   = glGetUniformLocation(program, "prevBuf");
+    jfaStepUniforms.stepPx    = glGetUniformLocation(program, "stepPx");
+    jfaStepUniforms.fieldSize = glGetUniformLocation(program, "fieldSize");
+
+    return true;
+}
+
+bool CShaderManager::compileJfaFinalizeShader() {
+    if (!jfaFinalizeShader->createProgram(
+            g_pHyprOpenGL->m_shaders->TEXVERTSRC,
+            loadShaderSource("jfafinalize.frag"),
+            true
+        )) {
+        HyprlandAPI::addNotification(PHANDLE,
+            std::format("[{}] Failed to compile JFA finalize shader", PLUGIN_NAME),
+            CHyprColor{1.0, 0.2, 0.2, 1.0}, 5000);
+        return false;
+    }
+
+    const auto program = jfaFinalizeShader->program();
+
+    jfaFinalizeUniforms.prevBuf        = glGetUniformLocation(program, "prevBuf");
+    jfaFinalizeUniforms.fieldSize      = glGetUniformLocation(program, "fieldSize");
+    jfaFinalizeUniforms.pixelsPerTexel = glGetUniformLocation(program, "pixelsPerTexel");
+
+    return true;
+}
+
 void CShaderManager::initializeIfNeeded() {
     if (m_initialized)
         return;
@@ -87,11 +154,23 @@ void CShaderManager::initializeIfNeeded() {
     if (!compileBlurShader())
         return;
 
+    if (!compileJfaSeedShader())
+        return;
+
+    if (!compileJfaStepShader())
+        return;
+
+    if (!compileJfaFinalizeShader())
+        return;
+
     m_initialized = true;
 }
 
 void CShaderManager::destroy() noexcept {
     glassShader->destroy();
     blurShader->destroy();
+    jfaSeedShader->destroy();
+    jfaStepShader->destroy();
+    jfaFinalizeShader->destroy();
     m_initialized = false;
 }

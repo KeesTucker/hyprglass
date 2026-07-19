@@ -30,11 +30,30 @@ struct SGlassUniforms {
     GLint maskUVOffset = -1;
     GLint maskUVScale = -1;
     GLint maskAlphaThreshold = -1;
+
+    // Layers only: JFA distance field replacing the box SDF for
+    // non-rectangular content
+    GLint distField = -1;
+    GLint distFieldSize = -1;
+    GLint useDistanceField = -1;
 };
 
 struct SBlurUniforms {
     GLint direction = -1;
     GLint radius    = -1;
+};
+
+// Shared by jfaSeedShader/jfaStepShader/jfaFinalizeShader - each only sets
+// the fields its own shader source declares, the rest stay at -1 and are
+// simply unused.
+struct SJfaUniforms {
+    GLint maskUVOffset       = -1; // seed
+    GLint maskUVScale        = -1; // seed
+    GLint maskAlphaThreshold = -1; // seed
+    GLint prevBuf            = -1; // step, finalize
+    GLint stepPx             = -1; // step
+    GLint pixelsPerTexel     = -1; // finalize
+    GLint fieldSize          = -1; // seed + step + finalize
 };
 
 class CShaderManager {
@@ -50,10 +69,22 @@ class CShaderManager {
     SP<CShader>    blurShader = makeShared<CShader>();
     SBlurUniforms  blurUniforms;
 
+    SP<CShader>    jfaSeedShader = makeShared<CShader>();
+    SJfaUniforms   jfaSeedUniforms;
+
+    SP<CShader>    jfaStepShader = makeShared<CShader>();
+    SJfaUniforms   jfaStepUniforms;
+
+    SP<CShader>    jfaFinalizeShader = makeShared<CShader>();
+    SJfaUniforms   jfaFinalizeUniforms;
+
   private:
     bool m_initialized = false;
 
     [[nodiscard]] static std::string loadShaderSource(const char* fileName);
     [[nodiscard]] bool compileGlassShader();
     [[nodiscard]] bool compileBlurShader();
+    [[nodiscard]] bool compileJfaSeedShader();
+    [[nodiscard]] bool compileJfaStepShader();
+    [[nodiscard]] bool compileJfaFinalizeShader();
 };

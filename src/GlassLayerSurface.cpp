@@ -329,11 +329,27 @@ void CGlassLayerSurface::compositeAndRestore(PHLMONITOR monitor, float alpha) {
         .alphaThreshold    = maskThreshold,
     };
 
+    // Non-rectangular content (e.g. waybar's separate pill-shaped module
+    // groups): derive a per-pixel distance field from this frame's alpha
+    // mask instead of using the closed-form box SDF. Only attempted when
+    // computeAlphaContentBox found real content above - contentBox is
+    // nullopt on a not-yet-rendered/fully-hidden frame, and there's nothing
+    // to build a field from.
+    std::optional<GlassRenderer::SDistanceFieldResult> distField;
+    if (contentBox) {
+        distField = GlassRenderer::computeDistanceField(m_distFieldBuffers, m_surfaceTempFramebuffer, maskInfo, effectiveTransformBox,
+                                                          dynamic_cast<Render::GL::CGLFramebuffer*>(target.get())->getFBID(),
+                                                          monitorWidth, monitorHeight);
+    }
+
     // The glass shader composites both the glass effect and the surface content
     // in a single pass: glass behind, surface on top, using the temp FBO alpha.
+    // cornerRadius/roundingPower stay as set above (0.0f/2.0f) regardless -
+    // the shader ignores them whenever distField is present.
     GlassRenderer::applyGlassEffect(m_sampleFramebuffer, target,
                                      effectiveRawBox, effectiveTransformBox, alpha,
                                      cornerRadius, roundingPower, effectiveLayout, ctx,
                                      &maskInfo, m_sharpFramebuffer,
-                                     /* refractOutward = */ true);
+                                     /* refractOutward = */ true,
+                                     distField ? &*distField : nullptr);
 }

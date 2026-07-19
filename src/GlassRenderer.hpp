@@ -27,6 +27,18 @@ inline constexpr float BLUR_DOWNSCALE_THRESHOLD = 0.35f; // min blur_strength fo
 // tightens the detected box, it doesn't change the cost model.
 inline constexpr int ALPHA_PROBE_SIZE = 128;
 
+// Jump Flood Algorithm distance field, layers only. Buffer sizing is aspect-
+// preserving - a squashed aspect would distort the gradient direction used
+// for refractionDir - so one scale factor derived from the content box's
+// longer dimension is applied to both axes before independently clamping
+// each to [JFA_MIN_DIM, JFA_MAX_DIM].
+inline constexpr int JFA_DOWNSCALE = 1;   // content-box px -> field texels
+inline constexpr int JFA_MAX_DIM   = 512; // cap on the buffer's longer side;
+                                           // cost-control only (JFA passes
+                                           // are still tiny next to the
+                                           // existing multi-iteration blur).
+inline constexpr int JFA_MIN_DIM = 8;
+
 // Layers only: alpha mask from the temp FBO that captured the rendered surface.
 // Constrains the glass effect to regions where the layer has visible content.
 // Windows do not use masking, they pass mask=nullptr to applyGlassEffect.
@@ -55,6 +67,43 @@ struct SSampleLayout {
     Vector2D validMax = {1.0, 1.0};
 };
 
+// Layers only: per-pixel unsigned distance-to-boundary field of a layer's
+// alpha silhouette, computed via Jump Flooding. Ping-ponged RGBA16F buffer
+// pair (DRM_FORMAT_ABGR16161616F, same format already proven color-
+// renderable on this GPU/driver by m_surfaceTempFramebuffer - see the format
+// comment in GlassLayerSurface::sampleAndRedirect) storing each texel's
+// current best-known nearest-boundary seed as (seedX, seedY, validFlag) in
+// .rgb - float storage means exact seed positions with no encoding/precision
+// games, and floats are never subject to the sRGB transfer function that
+// makes raw UNORM8 RGB channels risky to trust for exact values elsewhere in
+// this codebase. bufA/bufB are forced to GL_NEAREST (required during
+// propagation - bilinearly blending two unrelated seed *positions* together
+// corrupts them), so a finalize pass bakes the actual per-texel distance
+// (not raw positions) into bufFinal, which is left at the default
+// GL_LINEAR - hardware-interpolating a real distance value is meaningful in
+// a way interpolating raw seed coordinates isn't, and this is what
+// liquidglass.frag samples. Consumed there to replace the closed-form box
+// SDF for non-rectangular content (e.g. waybar's separate pill-shaped
+// module groups). Owned per CGlassLayerSurface instance, not shared, so
+// multiple simultaneous layer-glass surfaces don't thrash a shared buffer's
+// size every frame.
+struct SDistanceFieldBuffers {
+    SP<Render::IFramebuffer> bufA, bufB, bufFinal;
+};
+
+struct SDistanceFieldResult {
+    GLuint   texId = 0;
+    Vector2D fieldSize; // resolved field width/height, in field texels
+};
+
+// Runs the JFA seed + propagation passes over buffers sized from
+// contentBox. Returns std::nullopt when contentBox is degenerate - callers
+// should fall back to the closed-form box SDF, same convention as
+// computeAlphaContentBox's std::nullopt fallback.
+std::optional<SDistanceFieldResult> computeDistanceField(SDistanceFieldBuffers& buffers, SP<Render::IFramebuffer> maskSource,
+                                                           const SMaskInfo& mask, CBox contentBox,
+                                                           GLuint callerFramebufferID, int viewportWidth, int viewportHeight);
+
 // sharpFramebuffer, when non-null, receives a full-resolution unblurred copy
 // of the same padded region (always full-res, even when the blur sample is
 // downscaled) - the shader's refracted rim samples it, and it doubles as the
@@ -82,7 +131,8 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
                        const SSampleLayout& sampleLayout, const SResolveContext& resolveContext,
                        const SMaskInfo* mask = nullptr,
                        SP<Render::IFramebuffer> sharpFramebuffer = nullptr,
-                       bool refractOutward = true);
+                       bool refractOutward = true,
+                       const SDistanceFieldResult* distField = nullptr);
 
 // Layers only: tight axis-aligned bounding box (in the same buffer/pixel
 // space as searchBox) of alphaSource's non-transparent content within
