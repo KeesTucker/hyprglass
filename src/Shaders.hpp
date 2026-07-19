@@ -215,7 +215,14 @@ void main() {
     if (cornerAlpha < 0.001) discard;
 
     float minDim = min(fullSize.x, fullSize.y);
-    float bezelWidthPx = edgeThickness * minDim;
+
+    // Fixed reference, not minDim: bezel width in real pixels used to be
+    // edgeThickness * minDim, so the same edge_thickness value gave a huge
+    // window a thick bezel and a small popup/notification a paper-thin one.
+    // Multiplying by a constant instead makes the refraction band the same
+    // absolute size on every window/layer regardless of its own dimensions.
+    const float EDGE_THICKNESS_REFERENCE_PX = 1000.0;
+    float bezelWidthPx = edgeThickness * EDGE_THICKNESS_REFERENCE_PX;
 
     // ========================================
     // EDGE PROXIMITY + DIRECTION
