@@ -50,6 +50,7 @@ void registerConfig(HANDLE handle) {
     // Windows only: focus-reactive edge/refraction scaling
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::UNFOCUSED_EDGE_THICKNESS_SCALE, Config::FLOAT{GlobalDefaults::UNFOCUSED_EDGE_THICKNESS_SCALE});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::UNFOCUSED_REFRACTION_SCALE, Config::FLOAT{GlobalDefaults::UNFOCUSED_REFRACTION_SCALE});
+    addConfigValue<Config::Values::Float>(handle, ConfigKeys::FOCUS_EDGE_OPACITY_FADE, Config::FLOAT{GlobalDefaults::FOCUS_EDGE_OPACITY_FADE});
 
     // Global level — real defaults for effect settings,
     // sentinel for theme-sensitive settings (fallback to hardcoded theme defaults)
@@ -173,6 +174,7 @@ void initConfigPointers(HANDLE handle, SPluginConfig& config) {
 
     config.unfocusedEdgeThicknessScale = getStaticPtr<Hyprlang::FLOAT>(handle, ConfigKeys::UNFOCUSED_EDGE_THICKNESS_SCALE);
     config.unfocusedRefractionScale    = getStaticPtr<Hyprlang::FLOAT>(handle, ConfigKeys::UNFOCUSED_REFRACTION_SCALE);
+    config.focusEdgeOpacityFade        = getStaticPtr<Hyprlang::FLOAT>(handle, ConfigKeys::FOCUS_EDGE_OPACITY_FADE);
 
     initOverridablePointers(handle, config.global,
         ConfigKeys::BLUR_STRENGTH, ConfigKeys::BLUR_ITERATIONS,

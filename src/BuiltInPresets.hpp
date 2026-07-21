@@ -71,6 +71,14 @@ namespace GlobalDefaults {
     // preset/theme already resolved to, not itself a themeable dimension.
     inline constexpr float   UNFOCUSED_EDGE_THICKNESS_SCALE = 0.6f;
     inline constexpr float   UNFOCUSED_REFRACTION_SCALE     = 0.65f;
+
+    // Windows only. On focus, thins the window's own opaque content right
+    // at the refraction band (0 = disabled, 1 = fully transparent at the
+    // very edge) so glass shows through more strongly there, fading back to
+    // fully opaque toward the interior - same edgeProximity falloff as the
+    // refraction bezel, so the two bands line up exactly. Animated by the
+    // same focus ease as the two scales above.
+    inline constexpr float   FOCUS_EDGE_OPACITY_FADE = 0.6f;
 } // namespace GlobalDefaults
 
 // ── Built-in presets ─────────────────────────────────────────────────────────

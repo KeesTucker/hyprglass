@@ -67,6 +67,7 @@ inline constexpr auto LAYERS_DISTANCE_FIELD_RESOLUTION   = "plugin:hyprglass:lay
 // Windows only: focus-reactive edge/refraction scaling
 inline constexpr auto UNFOCUSED_EDGE_THICKNESS_SCALE = "plugin:hyprglass:unfocused_edge_thickness_scale";
 inline constexpr auto UNFOCUSED_REFRACTION_SCALE     = "plugin:hyprglass:unfocused_refraction_scale";
+inline constexpr auto FOCUS_EDGE_OPACITY_FADE        = "plugin:hyprglass:focus_edge_opacity_fade";
 
 // Overridable — dark theme overrides
 inline constexpr auto DARK_BLUR_STRENGTH        = "plugin:hyprglass:dark:blur_strength";
@@ -196,6 +197,7 @@ struct SPluginConfig {
 
     Hyprlang::FLOAT* const* unfocusedEdgeThicknessScale = nullptr;
     Hyprlang::FLOAT* const* unfocusedRefractionScale    = nullptr;
+    Hyprlang::FLOAT* const* focusEdgeOpacityFade        = nullptr;
 
     SOverridableConfig global;
     SOverridableConfig dark;

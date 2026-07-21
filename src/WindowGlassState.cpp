@@ -367,6 +367,13 @@ void CWindowGlassState::compositeAndRestore(PHLMONITOR monitor, float alpha) {
     } catch (...) {}
     const float fadeOnlyAlpha = activeAlpha > 0.001f ? std::clamp(alpha / activeAlpha, 0.0f, 1.0f) : alpha;
 
+    // Focus-reactive edge opacity fade: ramps from 0 (unfocused - no
+    // change) to the configured max as the window focuses, using the same
+    // ease as the edge_thickness/refraction_strength focus scaling above.
+    const auto& windowConfig = g_pGlobalState->config;
+    const float focusEdgeOpacityFadeConfig = windowConfig.focusEdgeOpacityFade ? **windowConfig.focusEdgeOpacityFade : GlobalDefaults::FOCUS_EDGE_OPACITY_FADE;
+    const float edgeOpacityFade = std::clamp(focusEdgeOpacityFadeConfig, 0.0f, 1.0f) * m_focusAnim;
+
     GlassRenderer::applyGlassEffect(m_sampleFramebuffer, target,
                                      rawBox, transformBox, fadeOnlyAlpha,
                                      cornerRadius, roundingPower, m_sampleLayout, ctx,
@@ -374,5 +381,6 @@ void CWindowGlassState::compositeAndRestore(PHLMONITOR monitor, float alpha) {
                                      /* refractOutward = */ window->m_isFloating,
                                      /* distField = */ nullptr,
                                      /* gradientStepTexels = */ GlobalDefaults::LAYERS_REFRACTION_BLEND,
-                                     /* focusFactor = */ m_focusAnim);
+                                     /* focusFactor = */ m_focusAnim,
+                                     /* edgeOpacityFade = */ edgeOpacityFade);
 }

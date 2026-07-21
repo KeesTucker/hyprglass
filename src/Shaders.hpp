@@ -71,6 +71,14 @@ uniform vec2 maskUVOffset;
 uniform vec2 maskUVScale;
 uniform float maskAlphaThreshold;
 
+// Windows only: how strongly the window's own opaque content fades out at
+// the refraction band, revealing glass, before fading back to fully opaque
+// toward the interior - see the hasMask composite step in main(). Already
+// has the focus-ease amount and configured strength folded in on the CPU
+// side (WindowGlassState.cpp), so 0.0 here (layers, or an unfocused
+// window) is a complete no-op.
+uniform float edgeOpacityFade;
+
 // Layers only: per-pixel distance-to-boundary field replacing the
 // closed-form box SDF below, so refraction hugs the layer's actual alpha
 // silhouette (e.g. multiple separate pill-shaped bar modules) instead of a
@@ -403,10 +411,21 @@ void main() {
     float glassA = glassOpacity * cornerAlpha;
 
     if (hasMask) {
-        // Layers only: composite the rendered surface over the glass effect
-        // in a single pass. surfacePixel is premultiplied alpha from Hyprland's
-        // surface rendering, so we unpremultiply before the 'over' blend.
+        // Composite the rendered surface over the glass effect in a single
+        // pass. surfacePixel is premultiplied alpha from Hyprland's surface
+        // rendering, so we unpremultiply before the 'over' blend.
         float surfA = surfacePixel.a;
+
+        // Windows only, focused (edgeOpacityFade folds in focus/config
+        // already - a no-op everywhere else): thin the window's own opaque
+        // content right at the refraction band so glass shows through more
+        // strongly there, reusing edgeProximity - the same falloff that
+        // already drives the refraction bezel width, so the transparent
+        // band lines up with the visible refraction band exactly. Deep in
+        // the interior edgeProximity -> 0, so surfA (and the content) stays
+        // fully opaque - only the rim thins out.
+        surfA *= 1.0 - clamp(edgeOpacityFade, 0.0, 1.0) * edgeProximity;
+
         vec3 surfRGB = surfA > 0.001 ? surfacePixel.rgb / surfA : vec3(0.0);
 
         float compA = surfA + glassA * (1.0 - surfA);

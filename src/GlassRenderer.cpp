@@ -406,7 +406,7 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
                        const SSampleLayout& sampleLayout, const SResolveContext& resolveContext,
                        const SMaskInfo* mask, SP<Render::IFramebuffer> sharpFramebuffer,
                        bool refractOutward, const SDistanceFieldResult* distField,
-                       float gradientStepTexels, float focusFactor) {
+                       float gradientStepTexels, float focusFactor, float edgeOpacityFade) {
     if (!sampleFramebuffer || !targetFramebuffer)
         return;
 
@@ -545,6 +545,8 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
     } else {
         glUniform1i(uniforms.useDistanceField, 0);
     }
+
+    glUniform1f(uniforms.edgeOpacityFade, edgeOpacityFade);
 
     shader->setUniformFloat(SHADER_RADIUS, cornerRadius);
     shader->setUniformFloat(SHADER_ROUNDING_POWER, roundingPower);

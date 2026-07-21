@@ -37,6 +37,9 @@ struct SGlassUniforms {
     GLint distFieldSize = -1;
     GLint useDistanceField = -1;
     GLint gradientStepTexels = -1;
+
+    // Windows only: focus-reactive edge opacity fade
+    GLint edgeOpacityFade = -1;
 };
 
 struct SBlurUniforms {

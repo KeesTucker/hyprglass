@@ -135,6 +135,10 @@ void blurBackground(SP<Render::IFramebuffer> sampleFramebuffer, float radius, in
 // focusFactor: windows only, 1.0 = focused look (unscaled). Layers have no
 // unfocused concept and always pass the default. See WindowGlassState's
 // tickFocusAnim()/focusFactor() for how windows animate this over time.
+// edgeOpacityFade: windows only, 0.0 = no effect (default - layers and
+// unfocused windows never pass anything else). Already has the focus-ease
+// amount and configured strength folded in by the caller; see the
+// hasMask composite step in Shaders.hpp.
 void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFramebuffer> targetFramebuffer,
                        CBox& rawBox, CBox& transformedBox,
                        float alpha, float cornerRadius, float roundingPower,
@@ -144,7 +148,8 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
                        bool refractOutward = true,
                        const SDistanceFieldResult* distField = nullptr,
                        float gradientStepTexels = GlobalDefaults::LAYERS_REFRACTION_BLEND,
-                       float focusFactor = 1.0f);
+                       float focusFactor = 1.0f,
+                       float edgeOpacityFade = 0.0f);
 
 // Layers only: tight axis-aligned bounding box (in the same buffer/pixel
 // space as searchBox) of alphaSource's non-transparent content within
