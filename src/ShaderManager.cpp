@@ -138,9 +138,13 @@ bool CShaderManager::compileJfaFinalizeShader() {
 
     const auto program = jfaFinalizeShader->program();
 
-    jfaFinalizeUniforms.prevBuf        = glGetUniformLocation(program, "prevBuf");
-    jfaFinalizeUniforms.fieldSize      = glGetUniformLocation(program, "fieldSize");
-    jfaFinalizeUniforms.pixelsPerTexel = glGetUniformLocation(program, "pixelsPerTexel");
+    jfaFinalizeUniforms.prevBuf            = glGetUniformLocation(program, "prevBuf");
+    jfaFinalizeUniforms.fieldSize          = glGetUniformLocation(program, "fieldSize");
+    jfaFinalizeUniforms.pixelsPerTexel     = glGetUniformLocation(program, "pixelsPerTexel");
+    jfaFinalizeUniforms.maskTex            = glGetUniformLocation(program, "maskTex");
+    jfaFinalizeUniforms.maskUVOffset       = glGetUniformLocation(program, "maskUVOffset");
+    jfaFinalizeUniforms.maskUVScale        = glGetUniformLocation(program, "maskUVScale");
+    jfaFinalizeUniforms.maskAlphaThreshold = glGetUniformLocation(program, "maskAlphaThreshold");
 
     return true;
 }

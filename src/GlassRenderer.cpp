@@ -337,7 +337,7 @@ std::optional<SDistanceFieldResult> computeDistanceField(SDistanceFieldBuffers& 
         glUniform2f(u.fieldSize, static_cast<float>(fieldW), static_cast<float>(fieldH));
         glBindVertexArray(shader->getUniformLocation(SHADER_SHADER_VAO));
 
-        for (int step = nextPow2(std::max(fieldW, fieldH)) / 2; step >= 1; step /= 2) {
+        const auto runStep = [&](int step) {
             glUniform1f(u.stepPx, static_cast<float>(step));
 
             glActiveTexture(GL_TEXTURE0);
@@ -346,7 +346,18 @@ std::optional<SDistanceFieldResult> computeDistanceField(SDistanceFieldBuffers& 
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
             std::swap(src, dst);
-        }
+        };
+
+        for (int step = nextPow2(std::max(fieldW, fieldH)) / 2; step >= 1; step /= 2)
+            runStep(step);
+
+        // "JFA+1": one extra unit-step pass. Standard JFA's wrong-nearest-
+        // seed errors cluster on Voronoi boundaries between seed clusters -
+        // for a rounded silhouette that is exactly the diagonal radiating
+        // from each corner, right where refractionDirField differentiates
+        // the field. The extra pass repairs most of them for one cheap
+        // field-sized draw.
+        runStep(1);
     }
 
     // --- Finalize: bake (*src)'s raw seed positions into a real, linearly-
@@ -358,6 +369,16 @@ std::optional<SDistanceFieldResult> computeDistanceField(SDistanceFieldBuffers& 
         glUniform1i(u.prevBuf, 0);
         glUniform2f(u.fieldSize, static_cast<float>(fieldW), static_cast<float>(fieldH));
         glUniform1f(u.pixelsPerTexel, pixelsPerTexel);
+
+        // Mask on unit 1: finalize samples it to sign the distance
+        // (positive inside the silhouette, negative outside), same UV
+        // transform the seed pass uses.
+        glUniform1i(u.maskTex, 1);
+        glUniform2f(u.maskUVOffset, static_cast<float>(mask.uvOffset.x), static_cast<float>(mask.uvOffset.y));
+        glUniform2f(u.maskUVScale, static_cast<float>(mask.uvScale.x), static_cast<float>(mask.uvScale.y));
+        glUniform1f(u.maskAlphaThreshold, mask.alphaThreshold);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(mask.target, mask.textureId);
 
         glActiveTexture(GL_TEXTURE0);
         (*src)->getTexture()->bind();

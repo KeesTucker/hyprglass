@@ -125,14 +125,15 @@ float getCornerSDF(vec2 uv) {
 
 // ============================================================================
 // DISTANCE FIELD SDF (layers only, non-rectangular content)
-// distField holds each field texel's nearest-boundary seed as (seedX, seedY,
-// validFlag) in .rgb, computed by the Jump Flooding passes. This is an
-// *unsigned* distance-to-boundary field, not a full signed field: the mask
-// alpha discard earlier in main() already runs before cornerSdf is ever
-// computed, so every fragment reaching this point is already known to be
-// inside the silhouette - there's no "outside" case left to represent, so
-// the extra cost/complexity of seeding and propagating a second direction
-// buys nothing here.
+// distField holds a *signed* distance-to-boundary in real pixels, baked by
+// jfafinalize.frag from the Jump Flooding passes' nearest-boundary seeds:
+// positive inside the mask silhouette, negative outside. The mask alpha
+// discard earlier in main() already gates which fragments get shaded, but
+// the sign is still load-bearing for refractionDirField(): its gradient
+// stencil reaches several texels across the boundary, and an unsigned
+// field folds into a V there (both sides positive), collapsing/flipping
+// the gradient wherever a stencil arm lands outside - which concentrated
+// at corners as visible diagonal seams.
 // ============================================================================
 
 // distField already holds the baked, hardware-bilinear-filterable distance
@@ -160,11 +161,13 @@ vec2 refractionDir(vec2 uv) {
 }
 
 // Distance-field equivalent of refractionDir, for non-rectangular layer
-// content. getDistanceFieldSDF is unsigned and increases moving away from
-// the boundary into the interior, so its gradient already points "further
-// inside" - the same direction refractionDir's toCenterPx approximates for
-// a single convex rectangle - no sign flip needed. Same near-singularity
-// guard as refractionDir's dead-center case.
+// content. getDistanceFieldSDF is signed (positive inside) and increases
+// moving from outside through the boundary into the interior, so its
+// gradient already points "further inside" - the same direction
+// refractionDir's toCenterPx approximates for a single convex rectangle -
+// no sign flip needed, and stencil arms crossing the boundary stay on the
+// same monotone ramp. Same near-singularity guard as refractionDir's
+// dead-center case.
 //
 // The finite-difference step is deliberately several field texels wide
 // (GRADIENT_STEP_TEXELS), not one: bilinear filtering in getDistanceFieldSDF
@@ -219,12 +222,18 @@ void main() {
 
     float cornerSdf = useDistanceField == 1 ? -getDistanceFieldSDF(uv) : getCornerSDF(uv);
 
-    if (cornerSdf > 0.0) {
+    // Layers (hasMask): never discard on the SDF. The mask alpha discard
+    // above already shapes the silhouette at full mask resolution, the
+    // distance field is coarser than the mask, and this same fragment must
+    // still composite the surface pixel even where the glass fades to
+    // nothing - cornerAlpha zeroing glassA handles that. Windows have no
+    // mask, so the SDF discard is their only shaping.
+    if (!hasMask && cornerSdf > 0.0) {
         discard;
     }
 
     float cornerAlpha = 1.0 - smoothstep(-1.5, 0.5, cornerSdf);
-    if (cornerAlpha < 0.001) discard;
+    if (!hasMask && cornerAlpha < 0.001) discard;
 
     float minDim = min(fullSize.x, fullSize.y);
 
@@ -248,7 +257,12 @@ void main() {
     // edgeProximity: 1.0 at boundary, exponential decay inward
     // inwardDir: pixel-space direction toward center (smooth everywhere)
     // ========================================
-    float edgeProximity = exp(cornerSdf / bezelWidthPx);
+    // min(): a layer fragment can sit slightly *outside* the signed field's
+    // zero crossing (antialiased mask fringe, field coarseness) while still
+    // passing the mask alpha discard - without the clamp, exp() of a
+    // positive sdf would amplify refraction/fresnel there beyond the
+    // boundary maximum instead of saturating at it.
+    float edgeProximity = exp(min(cornerSdf, 0.0) / bezelWidthPx);
     vec2 inwardDir = useDistanceField == 1 ? refractionDirField(uv) : refractionDir(uv);
 
     // ========================================
@@ -566,15 +580,30 @@ precision highp float;
  * Jump Flood Algorithm - finalize pass.
  *
  * Converts the last propagation buffer's raw (seedX, seedY, validFlag)
- * into an actual per-texel distance-to-boundary value, in real pixels.
+ * into a *signed* per-texel distance-to-boundary value in real pixels:
+ * positive inside the mask silhouette, negative outside. The sign matters
+ * even though the glass shader only shades inside fragments: its gradient
+ * stencil (refractionDirField) reaches several texels across the boundary,
+ * and an unsigned field folds into a V at the silhouette - both sides
+ * positive - so stencil arms landing outside read a *rising* distance and
+ * collapse/flip the gradient. At corners both arms cross out at once,
+ * asymmetrically, which showed up as diagonal seams radiating from every
+ * corner. A signed field is a clean linear ramp across the boundary, so
+ * the same stencil differentiates it correctly.
+ *
  * Written to its own texture left at the default GL_LINEAR filtering
  * (unlike the seed/step ping-pong buffers, which must stay GL_NEAREST) -
  * bilinearly interpolating a real distance value between texels is
- * meaningful and smooths curved silhouettes; interpolating raw seed
- * *positions* is not and would corrupt them.
+ * meaningful (and across the signed zero crossing, exactly right) and
+ * smooths curved silhouettes; interpolating raw seed *positions* is not
+ * and would corrupt them.
  */
 
 uniform sampler2D prevBuf; // final (seedX, seedY, validFlag) buffer
+uniform sampler2D maskTex; // layer's alpha mask - decides the sign
+uniform vec2 maskUVOffset; // same field-uv -> mask-uv transform as jfaseed
+uniform vec2 maskUVScale;
+uniform float maskAlphaThreshold;
 uniform vec2 fieldSize;
 uniform float pixelsPerTexel;
 
@@ -587,10 +616,15 @@ void main() {
 
     float dist = seed.b < 0.5
         ? 9999.0 // no boundary seed reached this texel (pathological
-                  // sliver-thin content) - treat as deep interior, flat glass
+                  // sliver-thin content) - treat as deep interior/exterior,
+                  // flat glass either way
         : length(myTexel - seed.xy) * pixelsPerTexel;
 
-    fragColor = vec4(dist, dist, dist, 1.0);
+    vec2 maskUV = v_texcoord * maskUVScale + maskUVOffset;
+    bool inside = texture(maskTex, clamp(maskUV, 0.001, 0.999)).a >= maskAlphaThreshold;
+
+    float signedDist = inside ? dist : -dist;
+    fragColor = vec4(signedDist, signedDist, signedDist, 1.0);
 }
 )GLSL"},
 };

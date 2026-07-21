@@ -48,9 +48,11 @@ struct SBlurUniforms {
 // the fields its own shader source declares, the rest stay at -1 and are
 // simply unused.
 struct SJfaUniforms {
-    GLint maskUVOffset       = -1; // seed
-    GLint maskUVScale        = -1; // seed
-    GLint maskAlphaThreshold = -1; // seed
+    GLint maskUVOffset       = -1; // seed, finalize
+    GLint maskUVScale        = -1; // seed, finalize
+    GLint maskAlphaThreshold = -1; // seed, finalize
+    GLint maskTex            = -1; // finalize (signs the distance; seed
+                                   // reads the mask via SHADER_TEX instead)
     GLint prevBuf            = -1; // step, finalize
     GLint stepPx             = -1; // step
     GLint pixelsPerTexel     = -1; // finalize
