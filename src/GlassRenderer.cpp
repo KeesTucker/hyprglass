@@ -406,7 +406,7 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
                        const SSampleLayout& sampleLayout, const SResolveContext& resolveContext,
                        const SMaskInfo* mask, SP<Render::IFramebuffer> sharpFramebuffer,
                        bool refractOutward, const SDistanceFieldResult* distField,
-                       float gradientStepTexels) {
+                       float gradientStepTexels, float focusFactor) {
     if (!sampleFramebuffer || !targetFramebuffer)
         return;
 
@@ -475,12 +475,24 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
     shader->setUniformFloat2(SHADER_FULL_SIZE,
         static_cast<float>(fullSize.x), static_cast<float>(fullSize.y));
 
-    glUniform1f(uniforms.refractionStrength,  resolvePresetFloat(resolveContext, &SPresetValues::refractionStrength, &SOverridableConfig::refractionStrength));
+    // Windows only (layers pass the default focusFactor=1.0, i.e. unscaled):
+    // ease edge_thickness/refraction_strength toward the configured unfocused
+    // scale as the window loses focus. mix(unfocusedScale, 1.0, focusFactor)
+    // - focusFactor=1 (focused) -> scale 1.0 (base look unchanged);
+    //   focusFactor=0 (unfocused) -> scale = the configured unfocusedScale.
+    const auto& config     = g_pGlobalState->config;
+    const float focusBlend = std::clamp(focusFactor, 0.0f, 1.0f);
+    const float unfocusedEdgeScale       = config.unfocusedEdgeThicknessScale ? **config.unfocusedEdgeThicknessScale : 1.0f;
+    const float unfocusedRefractionScale = config.unfocusedRefractionScale ? **config.unfocusedRefractionScale : 1.0f;
+    const float edgeScale       = unfocusedEdgeScale + (1.0f - unfocusedEdgeScale) * focusBlend;
+    const float refractionScale = unfocusedRefractionScale + (1.0f - unfocusedRefractionScale) * focusBlend;
+
+    glUniform1f(uniforms.refractionStrength,  resolvePresetFloat(resolveContext, &SPresetValues::refractionStrength, &SOverridableConfig::refractionStrength) * refractionScale);
     glUniform1f(uniforms.chromaticAberration, resolvePresetFloat(resolveContext, &SPresetValues::chromaticAberration, &SOverridableConfig::chromaticAberration));
     glUniform1f(uniforms.fresnelStrength,     resolvePresetFloat(resolveContext, &SPresetValues::fresnelStrength, &SOverridableConfig::fresnelStrength));
     glUniform1f(uniforms.specularStrength,    resolvePresetFloat(resolveContext, &SPresetValues::specularStrength, &SOverridableConfig::specularStrength));
     glUniform1f(uniforms.glassOpacity,        resolvePresetFloat(resolveContext, &SPresetValues::glassOpacity, &SOverridableConfig::glassOpacity) * alpha);
-    glUniform1f(uniforms.edgeThickness,       resolvePresetFloat(resolveContext, &SPresetValues::edgeThickness, &SOverridableConfig::edgeThickness));
+    glUniform1f(uniforms.edgeThickness,       resolvePresetFloat(resolveContext, &SPresetValues::edgeThickness, &SOverridableConfig::edgeThickness) * edgeScale);
     glUniform1f(uniforms.lensDistortion,      resolvePresetFloat(resolveContext, &SPresetValues::lensDistortion, &SOverridableConfig::lensDistortion));
 
     uploadThemeUniforms(resolveContext);

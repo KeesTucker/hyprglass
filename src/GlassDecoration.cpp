@@ -47,6 +47,14 @@ void CGlassDecoration::draw(PHLMONITOR monitor, float const& alpha) {
             if (auto mon = window->m_monitor.lock())
                 g_pGlobalState->bumpSceneGeneration(mon.get());
         }
+
+        // Ticks the focus-look transition exactly once per frame (this is
+        // the only decoration - BOTTOM - that does so; OVER just reads the
+        // resulting value via m_state->focusFactor() in compositeAndRestore).
+        // No scene-generation bump: this only changes the window's own rim
+        // styling, not anything a layer behind it might be sampling.
+        if (m_state->tickFocusAnim())
+            damageEntire();
     }
 }
 

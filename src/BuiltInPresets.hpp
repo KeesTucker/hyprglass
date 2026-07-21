@@ -62,6 +62,15 @@ namespace GlobalDefaults {
     // crisper edges/refraction on large layers (walked 256 -> 512 -> 1024
     // chasing choppy/staircased edges) at more GPU cost per frame.
     inline constexpr int64_t LAYERS_DISTANCE_FIELD_RESOLUTION  = 1024;
+
+    // Windows only. Scales edge_thickness/refraction_strength on an
+    // unfocused window (1.0 = no change from the focused look). Animated
+    // (see FOCUS_ANIM_TIME_CONSTANT in WindowGlassState.cpp) so focus
+    // changes ease rather than pop. Global-only (not preset/theme
+    // resolved) - a secondary accent on top of whatever base look a
+    // preset/theme already resolved to, not itself a themeable dimension.
+    inline constexpr float   UNFOCUSED_EDGE_THICKNESS_SCALE = 0.6f;
+    inline constexpr float   UNFOCUSED_REFRACTION_SCALE     = 0.65f;
 } // namespace GlobalDefaults
 
 // ── Built-in presets ─────────────────────────────────────────────────────────

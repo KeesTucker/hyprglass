@@ -3,6 +3,7 @@
 #include "GlassRenderer.hpp"
 #include "PluginConfig.hpp"
 
+#include <chrono>
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/render/Framebuffer.hpp>
 
@@ -23,6 +24,15 @@ class CWindowGlassState {
 
     void damageIfMoved();
 
+    // Advances the focus transition toward the window's current focus state
+    // by one frame's worth of easing. Returns true while still transitioning
+    // (caller should damage the window so the eased value actually reaches
+    // the screen). Call exactly once per frame - see CGlassDecoration::draw().
+    bool tickFocusAnim();
+    // Current transition state: 1.0 = fully focused look, 0.0 = fully
+    // unfocused look. Read-only; updated by tickFocusAnim().
+    [[nodiscard]] float focusFactor() const { return m_focusAnim; }
+
     [[nodiscard]] PHLWINDOW getWindow() const;
     [[nodiscard]] bool      resolveEnabled() const;
 
@@ -40,6 +50,12 @@ class CWindowGlassState {
     CBox     m_lastSampleBox      = {};
 
     SP<Render::IFramebuffer> m_savedCurrentFB;
+
+    // Focus-transition ease state. Initialized to the window's real focus
+    // state at construction (see .cpp) so a freshly opened window doesn't
+    // animate in from "unfocused".
+    float                                 m_focusAnim;
+    std::chrono::steady_clock::time_point m_lastFocusTick;
 
     [[nodiscard]] bool        resolveThemeIsDark() const;
     [[nodiscard]] std::string resolvePresetName() const;

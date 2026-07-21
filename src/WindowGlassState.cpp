@@ -8,9 +8,17 @@
 #include <cmath>
 #include <GLES3/gl32.h>
 #include <hyprland/src/desktop/rule/windowRule/WindowRuleApplicator.hpp>
+#include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprutils/math/Misc.hpp>
+
+namespace {
+// Exponential-ease time constant (seconds) for the focus transition -
+// smaller is snappier. ~120ms lands close to the compositor's other quick
+// UI transitions without feeling like a hard cut.
+constexpr float FOCUS_ANIM_TIME_CONSTANT = 0.12f;
+} // namespace
 
 static CBox transformedWindowBox(CBox pixelBox, PHLMONITOR monitor) {
     const auto transform = Math::wlTransformToHyprutils(Math::invertTransform(monitor->m_transform));
@@ -20,6 +28,10 @@ static CBox transformedWindowBox(CBox pixelBox, PHLMONITOR monitor) {
 
 CWindowGlassState::CWindowGlassState(PHLWINDOW window)
     : m_window(window) {
+    // Seed from real focus state so a freshly opened window renders with
+    // its correct look on the very first frame instead of easing in.
+    m_focusAnim     = (window && Desktop::focusState()->isWindowActive(window)) ? 1.0f : 0.0f;
+    m_lastFocusTick = std::chrono::steady_clock::now();
 }
 
 CWindowGlassState::~CWindowGlassState() {
@@ -128,6 +140,25 @@ void CWindowGlassState::damageIfMoved() {
         if (monitor)
             g_pGlobalState->bumpSceneGeneration(monitor.get());
     }
+}
+
+bool CWindowGlassState::tickFocusAnim() {
+    const auto window  = m_window.lock();
+    const bool focused = window && Desktop::focusState()->isWindowActive(window);
+    const float target = focused ? 1.0f : 0.0f;
+
+    const auto  now        = std::chrono::steady_clock::now();
+    const float dtSeconds   = std::chrono::duration<float>(now - m_lastFocusTick).count();
+    m_lastFocusTick = now;
+
+    if (std::abs(m_focusAnim - target) < 0.001f) {
+        m_focusAnim = target;
+        return false;
+    }
+
+    const float rate = std::clamp(1.0f - std::exp(-dtSeconds / FOCUS_ANIM_TIME_CONSTANT), 0.0f, 1.0f);
+    m_focusAnim += (target - m_focusAnim) * rate;
+    return true;
 }
 
 void CWindowGlassState::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
@@ -340,5 +371,8 @@ void CWindowGlassState::compositeAndRestore(PHLMONITOR monitor, float alpha) {
                                      rawBox, transformBox, fadeOnlyAlpha,
                                      cornerRadius, roundingPower, m_sampleLayout, ctx,
                                      &maskInfo, m_sharpFramebuffer,
-                                     /* refractOutward = */ window->m_isFloating);
+                                     /* refractOutward = */ window->m_isFloating,
+                                     /* distField = */ nullptr,
+                                     /* gradientStepTexels = */ GlobalDefaults::LAYERS_REFRACTION_BLEND,
+                                     /* focusFactor = */ m_focusAnim);
 }

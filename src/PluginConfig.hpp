@@ -64,6 +64,10 @@ inline constexpr auto LAYERS_NAMESPACE_MASK_THRESHOLDS  = "plugin:hyprglass:laye
 inline constexpr auto LAYERS_REFRACTION_BLEND            = "plugin:hyprglass:layers:refraction_blend";
 inline constexpr auto LAYERS_DISTANCE_FIELD_RESOLUTION   = "plugin:hyprglass:layers:distance_field_resolution";
 
+// Windows only: focus-reactive edge/refraction scaling
+inline constexpr auto UNFOCUSED_EDGE_THICKNESS_SCALE = "plugin:hyprglass:unfocused_edge_thickness_scale";
+inline constexpr auto UNFOCUSED_REFRACTION_SCALE     = "plugin:hyprglass:unfocused_refraction_scale";
+
 // Overridable — dark theme overrides
 inline constexpr auto DARK_BLUR_STRENGTH        = "plugin:hyprglass:dark:blur_strength";
 inline constexpr auto DARK_BLUR_ITERATIONS      = "plugin:hyprglass:dark:blur_iterations";
@@ -189,6 +193,9 @@ struct SPluginConfig {
     StringConfigPtr       layersNamespaceMaskThresholds;
     Hyprlang::FLOAT* const* layersRefractionBlend          = nullptr;
     Hyprlang::INT* const*   layersDistanceFieldResolution  = nullptr;
+
+    Hyprlang::FLOAT* const* unfocusedEdgeThicknessScale = nullptr;
+    Hyprlang::FLOAT* const* unfocusedRefractionScale    = nullptr;
 
     SOverridableConfig global;
     SOverridableConfig dark;

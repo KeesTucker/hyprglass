@@ -132,6 +132,9 @@ void blurBackground(SP<Render::IFramebuffer> sampleFramebuffer, float radius, in
 // refractOutward: true = rim pulls in content from beyond the boundary
 // (floating windows, layers); false = inward compression (tiled windows,
 // where outward sampling would show the neighboring windows in the rim).
+// focusFactor: windows only, 1.0 = focused look (unscaled). Layers have no
+// unfocused concept and always pass the default. See WindowGlassState's
+// tickFocusAnim()/focusFactor() for how windows animate this over time.
 void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFramebuffer> targetFramebuffer,
                        CBox& rawBox, CBox& transformedBox,
                        float alpha, float cornerRadius, float roundingPower,
@@ -140,7 +143,8 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
                        SP<Render::IFramebuffer> sharpFramebuffer = nullptr,
                        bool refractOutward = true,
                        const SDistanceFieldResult* distField = nullptr,
-                       float gradientStepTexels = GlobalDefaults::LAYERS_REFRACTION_BLEND);
+                       float gradientStepTexels = GlobalDefaults::LAYERS_REFRACTION_BLEND,
+                       float focusFactor = 1.0f);
 
 // Layers only: tight axis-aligned bounding box (in the same buffer/pixel
 // space as searchBox) of alphaSource's non-transparent content within

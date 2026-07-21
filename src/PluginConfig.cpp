@@ -47,6 +47,10 @@ void registerConfig(HANDLE handle) {
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::LAYERS_REFRACTION_BLEND, Config::FLOAT{GlobalDefaults::LAYERS_REFRACTION_BLEND});
     addConfigValue<Config::Values::Int>(handle, ConfigKeys::LAYERS_DISTANCE_FIELD_RESOLUTION, Config::INTEGER{GlobalDefaults::LAYERS_DISTANCE_FIELD_RESOLUTION});
 
+    // Windows only: focus-reactive edge/refraction scaling
+    addConfigValue<Config::Values::Float>(handle, ConfigKeys::UNFOCUSED_EDGE_THICKNESS_SCALE, Config::FLOAT{GlobalDefaults::UNFOCUSED_EDGE_THICKNESS_SCALE});
+    addConfigValue<Config::Values::Float>(handle, ConfigKeys::UNFOCUSED_REFRACTION_SCALE, Config::FLOAT{GlobalDefaults::UNFOCUSED_REFRACTION_SCALE});
+
     // Global level — real defaults for effect settings,
     // sentinel for theme-sensitive settings (fallback to hardcoded theme defaults)
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::BLUR_STRENGTH, Config::FLOAT{GlobalDefaults::BLUR_STRENGTH});
@@ -166,6 +170,9 @@ void initConfigPointers(HANDLE handle, SPluginConfig& config) {
     config.layersNamespaceMaskThresholds = getStringPtr(handle, ConfigKeys::LAYERS_NAMESPACE_MASK_THRESHOLDS);
     config.layersRefractionBlend         = getStaticPtr<Hyprlang::FLOAT>(handle, ConfigKeys::LAYERS_REFRACTION_BLEND);
     config.layersDistanceFieldResolution = getStaticPtr<Hyprlang::INT>(handle, ConfigKeys::LAYERS_DISTANCE_FIELD_RESOLUTION);
+
+    config.unfocusedEdgeThicknessScale = getStaticPtr<Hyprlang::FLOAT>(handle, ConfigKeys::UNFOCUSED_EDGE_THICKNESS_SCALE);
+    config.unfocusedRefractionScale    = getStaticPtr<Hyprlang::FLOAT>(handle, ConfigKeys::UNFOCUSED_REFRACTION_SCALE);
 
     initOverridablePointers(handle, config.global,
         ConfigKeys::BLUR_STRENGTH, ConfigKeys::BLUR_ITERATIONS,
