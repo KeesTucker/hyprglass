@@ -479,10 +479,11 @@ precision highp float;
  * Jump Flood Algorithm - seed pass.
  *
  * Marks each field texel adjacent to the layer alpha mask's boundary
- * (inside, with at least one outside 4-neighbor) with its own texel
- * coordinate, encoded as (seedX, seedY, 1.0=valid) in .rgb. Every other
- * texel gets .b = 0.0 (no seed yet). The propagation passes (jfastep.frag)
- * flood these seeds outward until every texel knows its nearest one.
+ * (inside, with at least two outside 4-neighbors - see below) with its own
+ * texel coordinate, encoded as (seedX, seedY, 1.0=valid) in .rgb. Every
+ * other texel gets .b = 0.0 (no seed yet). The propagation passes
+ * (jfastep.frag) flood these seeds outward until every texel knows its
+ * nearest one.
  */
 
 uniform sampler2D tex; // layer's rendered-surface alpha mask (temp FBO)
@@ -502,14 +503,28 @@ void main() {
     float ownAlpha = texture(tex, clamp(baseUV, 0.001, 0.999)).a;
     bool  inside    = ownAlpha >= maskAlphaThreshold;
 
+    // Require >=2 outside neighbors, not just 1: a lone outside neighbor is
+    // just as likely to be single-texel noise (an anti-aliased fringe, a
+    // font glyph still rasterizing, a widget mid-layout right after a
+    // reload) as a real edge, and seeding on it plants a false
+    // nearest-boundary seed that JFA then faithfully propagates outward -
+    // visible as a small pucker of full-strength edge refraction/fresnel/
+    // specular in the middle of otherwise flat glass ("bubbles"). A real
+    // edge is always a multi-texel-wide run of boundary texels, so
+    // requiring 2 rejects the isolated-noise case without blunting any
+    // genuine edge.
     bool boundary = false;
     if (inside) {
         vec2 offs[4] = vec2[](vec2(1.0, 0.0), vec2(-1.0, 0.0), vec2(0.0, 1.0), vec2(0.0, -1.0));
+        int outsideCount = 0;
         for (int i = 0; i < 4; i++) {
             vec2 nUV = clamp(baseUV + offs[i] * stepUV, 0.001, 0.999);
             if (texture(tex, nUV).a < maskAlphaThreshold) {
-                boundary = true;
-                break;
+                outsideCount++;
+                if (outsideCount >= 2) {
+                    boundary = true;
+                    break;
+                }
             }
         }
     }
