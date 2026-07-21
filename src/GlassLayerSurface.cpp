@@ -95,17 +95,17 @@ void CGlassLayerSurface::damageIfMoved() {
     if (!layerSurface)
         return;
 
-    const auto currentPosition = layerSurface->m_realPosition->value();
-    const auto currentSize     = layerSurface->m_realSize->value();
+    const auto currentPosition = layerSurface->positionAnimation()->value();
+    const auto currentSize     = layerSurface->sizeAnimation()->value();
     if (currentSize.x <= 0.0 || currentSize.y <= 0.0 ||
         !std::isfinite(currentPosition.x) || !std::isfinite(currentPosition.y) ||
         !std::isfinite(currentSize.x) || !std::isfinite(currentSize.y))
         return;
 
-    const bool isAnimating = layerSurface->m_realPosition->isBeingAnimated() ||
-                             layerSurface->m_realSize->isBeingAnimated() ||
-                             layerSurface->m_alpha->isBeingAnimated() ||
-                             layerSurface->m_fadingOut;
+    const bool isAnimating = layerSurface->positionAnimation()->isBeingAnimated() ||
+                             layerSurface->sizeAnimation()->isBeingAnimated() ||
+                             layerSurface->alpha().isBeingAnimated() ||
+                             !layerSurface->m_mapped; // 0.56: unmapped-but-alive == old m_fadingOut
 
     const bool moved = currentPosition != m_lastPosition || currentSize != m_lastSize;
 
@@ -163,7 +163,7 @@ void CGlassLayerSurface::sampleAndRedirect(PHLMONITOR monitor, float alpha) {
 
     const bool geometryChanged = !m_hasCachedSample || transformBox != m_lastSampleBox;
 
-    if (layerSurface->m_fadingOut) {
+    if (!layerSurface->m_mapped) {
         // During fade-out, re-sampling captures stale pixels. Reuse cached sample.
         if (!m_hasCachedSample)
             return;

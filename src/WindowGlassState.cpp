@@ -100,8 +100,8 @@ void CWindowGlassState::damageIfMoved() {
     if (!window)
         return;
 
-    const auto currentPosition = window->m_realPosition->value();
-    const auto currentSize     = window->m_realSize->value();
+    const auto currentPosition = window->positionAnimation()->value();
+    const auto currentSize     = window->sizeAnimation()->value();
     if (currentSize.x <= 0.0 || currentSize.y <= 0.0 ||
         !std::isfinite(currentPosition.x) || !std::isfinite(currentPosition.y) ||
         !std::isfinite(currentSize.x) || !std::isfinite(currentSize.y))
@@ -109,8 +109,8 @@ void CWindowGlassState::damageIfMoved() {
 
     const auto workspace = window->m_workspace;
     const bool isAnimating = (workspace && !window->m_pinned && workspace->m_renderOffset->isBeingAnimated()) ||
-                             window->m_realPosition->isBeingAnimated() ||
-                             window->m_realSize->isBeingAnimated();
+                             window->positionAnimation()->isBeingAnimated() ||
+                             window->sizeAnimation()->isBeingAnimated();
 
     const bool moved = currentPosition != m_lastPosition || currentSize != m_lastSize;
 
