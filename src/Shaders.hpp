@@ -303,18 +303,26 @@ void main() {
 
     float cornerSdf = useDistanceField == 1 ? -getDistanceFieldSDF(uv) : getCornerSDF(uv);
 
-    // Layers (hasMask): never discard on the SDF. The mask alpha discard
-    // above already shapes the silhouette at full mask resolution, the
-    // distance field is coarser than the mask, and this same fragment must
-    // still composite the surface pixel even where the glass fades to
-    // nothing - cornerAlpha zeroing glassA handles that. Windows have no
-    // mask, so the SDF discard is their only shaping.
-    if (!hasMask && cornerSdf > 0.0) {
+    // Gate on useDistanceField, not hasMask: windows also set hasMask (the
+    // captured window/border/shadow pixel), but a window's box SDF is the
+    // one true boundary - nothing legitimate should ever exist past it, so
+    // it must still hard-discard there or the corner "gap" between the
+    // rounded SDF clip and the mask's own (rectangular) capture bounds lets
+    // whatever was captured there (shadow blur bleed, AA fringe) draw
+    // through completely unclipped, since cornerAlpha only zeroes glassA
+    // below, not surfA - this was the cause of black corner smudges on
+    // every window. Organic JFA layers (useDistanceField==1) are the one
+    // real exception: their mask alpha discard above already shapes the
+    // silhouette at full mask resolution, the distance field is coarser
+    // than the mask, and this same fragment must still composite the
+    // surface pixel even where the glass fades to nothing - cornerAlpha
+    // zeroing glassA handles that.
+    if (useDistanceField == 0 && cornerSdf > 0.0) {
         discard;
     }
 
     float cornerAlpha = 1.0 - smoothstep(-1.5, 0.5, cornerSdf);
-    if (!hasMask && cornerAlpha < 0.001) discard;
+    if (useDistanceField == 0 && cornerAlpha < 0.001) discard;
 
     float minDim = min(fullSize.x, fullSize.y);
 
