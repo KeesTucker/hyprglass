@@ -50,14 +50,22 @@ namespace GlobalDefaults {
     inline constexpr int64_t TINT_COLOR           = 0x8899aa22;
     inline constexpr float   LENS_DISTORTION      = 0.5f;
 
-    // Layers only. Tuned live (2026-07-19) chasing a hard crease where two
-    // separate silhouette lobes (e.g. adjacent bar pill modules) touch -
-    // see refractionDirField's comment in Shaders.hpp.
-    // Gradient finite-difference step, in JFA field texels (roughly real
-    // pixels - see DISTANCE_FIELD_RESOLUTION below). Wider blends the seam
-    // between separate lobes more smoothly at the cost of a little
-    // directional sharpness at real concave corners.
-    inline constexpr float   LAYERS_REFRACTION_BLEND           = 14.0f;
+    // Layers only. Originally tuned live (2026-07-19) chasing a hard crease
+    // where two separate silhouette lobes touch - see refractionDirField's
+    // comment in Shaders.hpp. Raised 14 -> 45 (2026-07-22) after confirming
+    // 14 still left a visible diagonal seam at every concave corner (a
+    // Sobel-vs-plain-difference gradient made no difference, and doubling
+    // DISTANCE_FIELD_RESOLUTION didn't shrink it either - ruling out both
+    // gradient-kernel shape and field quantization). Gradient
+    // finite-difference step, in JFA field texels (roughly real pixels -
+    // see DISTANCE_FIELD_RESOLUTION below): the medial-axis discontinuity
+    // inherent to any Euclidean distance field at a concave corner is real
+    // and can't be removed by resampling closer to it, only by sampling far
+    // enough past it that the stencil lands on unambiguous territory. 45
+    // does that at these corners' radii with no perceptible loss of edge
+    // sharpness; a much larger/near-borderless shape may need to go wider
+    // still.
+    inline constexpr float   LAYERS_REFRACTION_BLEND           = 45.0f;
     // Cap on the JFA distance field's longer side, in texels. Higher gives
     // crisper edges/refraction on large layers (walked 256 -> 512 -> 1024
     // chasing choppy/staircased edges) at more GPU cost per frame.

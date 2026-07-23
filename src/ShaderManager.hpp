@@ -37,6 +37,7 @@ struct SGlassUniforms {
     GLint distFieldSize = -1;
     GLint useDistanceField = -1;
     GLint gradientStepTexels = -1;
+    GLint debugView = -1; // 0=off, 1=direction color wheel, 2=signed-distance heatmap
 
     // Windows only: focus-reactive edge opacity fade
     GLint edgeOpacityFade = -1;

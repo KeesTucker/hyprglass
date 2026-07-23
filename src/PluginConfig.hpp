@@ -63,6 +63,7 @@ inline constexpr auto LAYERS_NAMESPACE_PRESETS          = "plugin:hyprglass:laye
 inline constexpr auto LAYERS_NAMESPACE_MASK_THRESHOLDS  = "plugin:hyprglass:layers:namespace_mask_thresholds";
 inline constexpr auto LAYERS_REFRACTION_BLEND            = "plugin:hyprglass:layers:refraction_blend";
 inline constexpr auto LAYERS_DISTANCE_FIELD_RESOLUTION   = "plugin:hyprglass:layers:distance_field_resolution";
+inline constexpr auto LAYERS_DEBUG_VIEW                  = "plugin:hyprglass:layers:debug_view";
 
 // Windows only: focus-reactive edge/refraction scaling
 inline constexpr auto UNFOCUSED_EDGE_THICKNESS_SCALE = "plugin:hyprglass:unfocused_edge_thickness_scale";
@@ -194,6 +195,7 @@ struct SPluginConfig {
     StringConfigPtr       layersNamespaceMaskThresholds;
     Hyprlang::FLOAT* const* layersRefractionBlend          = nullptr;
     Hyprlang::INT* const*   layersDistanceFieldResolution  = nullptr;
+    Hyprlang::INT* const*   layersDebugView                = nullptr;
 
     Hyprlang::FLOAT* const* unfocusedEdgeThicknessScale = nullptr;
     Hyprlang::FLOAT* const* unfocusedRefractionScale    = nullptr;

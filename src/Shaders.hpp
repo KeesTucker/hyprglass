@@ -88,6 +88,15 @@ uniform vec2 distFieldSize;
 uniform int useDistanceField;
 uniform float gradientStepTexels; // see refractionDirField()
 
+// Dev-only JFA debugging: bypasses the whole refraction/blur pipeline below
+// and paints the raw field/gradient directly, so seams/artifacts show up
+// undistorted by the render instead of having to be reverse-engineered
+// through it. 0=off (normal render), 1=refractionDirField() as a
+// direction color wheel (R/G = x/y, hard color boundaries = direction
+// flips/discontinuities), 2=signed distance heatmap with 10px contour
+// lines (kinks/gaps in the lines = field discontinuities). See main().
+uniform int debugView;
+
 in vec2 v_texcoord;
 layout(location = 0) out vec4 fragColor;
 
@@ -189,25 +198,89 @@ vec2 refractionDir(vec2 uv) {
 //
 // It also does double duty smoothing the seam between separate silhouette
 // lobes (e.g. two of a bar's pill-shaped module groups sitting close
-// together, or the narrow waist of a dumbbell-shaped mask): each lobe's
-// field points toward its own nearest boundary, so right where two lobes
-// meet or nearly meet, the direction flips rather than blending - a visible
-// hard crease between what look like two independent glass bulges. A wider
-// step averages samples from across that flip instead of straddling it by
-// a texel or two, turning the crease into a gradual blend. layers:
-// distance_field_resolution / the fixed JFA_DOWNSCALE (GlassRenderer.hpp)
-// put the field close to 1:1 with real pixels for most layers, so this is
-// roughly a real-pixel blend radius. gradientStepTexels itself is exposed
-// as layers:refraction_blend.
-vec2 refractionDirField(vec2 uv) {
+// together, or the narrow waist of a dumbbell-shaped mask) and at concave
+// corners: at both, the field's medial axis - where two different
+// nearest-boundary directions are equally close - reaches the boundary
+// itself, so the *true* gradient there is genuinely discontinuous (a real
+// property of Euclidean distance fields, not a JFA precision bug -
+// confirmed empirically 2026-07-22: doubling layers:distance_field_resolution
+// left an observed corner seam's on-screen size unchanged, and switching
+// this from a plain 2-tap-per-axis difference to a Sobel 3x3 - still
+// computed below, since it's a strictly better small-neighborhood estimate
+// - didn't shrink it either). No local resampling *closer* to the
+// singularity removes the kink; only sampling far enough *past* it that
+// the stencil lands on unambiguous territory does, which is what widening
+// this step (layers:refraction_blend) actually buys - it isn't just
+// smoothing quantization noise, it's the only lever that works here. See
+// LAYERS_REFRACTION_BLEND's comment in BuiltInPresets.hpp for the value
+// history. layers:distance_field_resolution / the fixed JFA_DOWNSCALE
+// (GlassRenderer.hpp) put the field close to 1:1 with real pixels for most
+// layers, so this is roughly a real-pixel blend radius.
+//
+// A live A/B/C rig (2026-07-22: a Quickshell layer surface with a plain
+// circle, a torus, and a rounded box side by side, same field/gradient
+// code, all at once) settled what this actually is. The circle and torus
+// - boundary curvature everywhere, no flat runs - render a perfectly
+// smooth radial hue wheel, no seam at any stencil width. The rounded box
+// - straight flat edges - shows a hard "+"-shaped seam splitting it into
+// four flat-colored quadrants, completely unmoved by either widening this
+// stencil or capping it to a tiny fraction of the box's own size. That's
+// because it isn't a sampling-precision artifact at all: a box's true
+// distance-to-nearest-*edge* is literally min(x-left, right-x, y-top,
+// bottom-y), and the gradient of a min() of four linear ramps is exactly
+// constant within each ramp's region and exactly discontinuous on the
+// (here axis-aligned, not diagonal, since the box is wider than tall)
+// boundary between them - mathematically correct, not a bug, but ugly:
+// flat quadrants with a hard crease instead of the round, continuously
+// rotating look every other shape gets. refractionDir() below (the
+// non-JFA, plain-window path) sidesteps this entirely by aiming at the
+// box's *center* instead of its nearest edge - always smooth, since
+// "center" has no competing-nearest-feature ambiguity. See
+// getGradientConfidence()'s use in main(): blends toward that same smooth
+// fallback exactly where this raw gradient is unreliable, instead of
+// either committing to the wrong-hued raw direction or (tried and
+// reverted same day) fading refraction strength to zero there, which just
+// swapped the seam for an equally visible flat dead patch.
+vec3 refractionDirField(vec2 uv) {
     vec2 texel = (gradientStepTexels / distFieldSize);
-    float dxp = getDistanceFieldSDF(uv + vec2(texel.x, 0.0));
-    float dxn = getDistanceFieldSDF(uv - vec2(texel.x, 0.0));
-    float dyp = getDistanceFieldSDF(uv + vec2(0.0, texel.y));
-    float dyn = getDistanceFieldSDF(uv - vec2(0.0, texel.y));
-    vec2 grad = vec2(dxp - dxn, dyp - dyn);
+
+    // Safety net, not the fix: an absolute texel count chosen for a
+    // screen-covering shape could otherwise reach past the opposite edge
+    // of a much smaller layer (e.g. a compact app-launcher panel) and
+    // sample unrelated structure. Doesn't address the quadrant seam
+    // itself - see getGradientConfidence().
+    const float MAX_GRADIENT_STEP_FRACTION = 0.15;
+    texel = min(texel, vec2(MAX_GRADIENT_STEP_FRACTION));
+
+    float tl = getDistanceFieldSDF(uv + vec2(-texel.x,  texel.y));
+    float tc = getDistanceFieldSDF(uv + vec2( 0.0,       texel.y));
+    float tr = getDistanceFieldSDF(uv + vec2( texel.x,  texel.y));
+    float ml = getDistanceFieldSDF(uv + vec2(-texel.x,  0.0));
+    float mr = getDistanceFieldSDF(uv + vec2( texel.x,  0.0));
+    float bl = getDistanceFieldSDF(uv + vec2(-texel.x, -texel.y));
+    float bc = getDistanceFieldSDF(uv + vec2( 0.0,      -texel.y));
+    float br = getDistanceFieldSDF(uv + vec2( texel.x, -texel.y));
+    vec2 grad = vec2(
+        (tr + 2.0 * mr + br) - (tl + 2.0 * ml + bl),
+        (tl + 2.0 * tc + tr) - (bl + 2.0 * bc + br)
+    );
     float len = length(grad);
-    return len > 0.001 ? grad / len : vec2(0.0);
+
+    // Confidence in .z: distance fields have |slope|==1 everywhere except
+    // where two nearest-edge candidates tie (the medial axis - the ridge
+    // between a box's flat quadrants), and this Sobel kernel's per-axis
+    // weights sum to 8 over a span of 2*stepPx, so 8*stepPx is len's
+    // expected value off that ridge; opposing finite-difference
+    // contributions cancel as it's approached, so len collapses well
+    // below that right where the raw direction becomes unreliable. main()
+    // uses this to blend toward refractionDir()'s smooth center-ward
+    // fallback there instead of either committing to this (locally
+    // correct, but globally seam-forming) raw direction or discarding it
+    // outright.
+    vec2 stepPx = texel * fullSize;
+    float expectedLen = 8.0 * (stepPx.x + stepPx.y) * 0.5;
+    float confidence = expectedLen > 0.001 ? smoothstep(0.0, expectedLen, len) : 0.0;
+    return vec3(len > 0.001 ? grad / len : vec2(0.0), confidence);
 }
 
 // ============================================================================
@@ -271,7 +344,52 @@ void main() {
     // positive sdf would amplify refraction/fresnel there beyond the
     // boundary maximum instead of saturating at it.
     float edgeProximity = exp(min(cornerSdf, 0.0) / bezelWidthPx);
-    vec2 inwardDir = useDistanceField == 1 ? refractionDirField(uv) : refractionDir(uv);
+
+    // Layers: blend the JFA field's raw nearest-edge direction toward
+    // refractionDir()'s smooth center-ward fallback, weighted by the
+    // field gradient's own confidence - see refractionDirField()'s
+    // comment for why the raw direction alone seams on boxy shapes.
+    // Windows have no field to be unreliable, so they just use the smooth
+    // fallback directly.
+    vec2 inwardDir;
+    if (useDistanceField == 1) {
+        vec3 fieldDir = refractionDirField(uv);
+        inwardDir = normalize(mix(refractionDir(uv), fieldDir.xy, fieldDir.z));
+    } else {
+        inwardDir = refractionDir(uv);
+    }
+
+    // ========================================
+    // JFA DEBUG VIEW (dev-only, see debugView uniform comment)
+    // Only meaningful with an actual JFA field bound (layers); windows
+    // always fall through to the normal render below.
+    // ========================================
+    if (debugView != 0 && useDistanceField == 1) {
+        vec3 dbg;
+        if (debugView == 1) {
+            // Direction color wheel: R/G encode inwardDir.xy in [0,1], B
+            // fixed mid-gray so pure +/-X and +/-Y read as distinct hues.
+            // A hard color seam anywhere but the true silhouette boundary
+            // is a direction discontinuity - i.e. exactly the kind of
+            // corner/lobe-seam bug this is for.
+            dbg = vec3(inwardDir * 0.5 + 0.5, 0.5);
+        } else {
+            // Signed distance heatmap: orange = inside (further in =
+            // brighter), blue = outside, black = right at the boundary.
+            // Contour lines every 10px - a kink, break, or uneven spacing
+            // in the lines is a field discontinuity (the seam itself),
+            // visible directly instead of inferred from refracted content.
+            float d = getDistanceFieldSDF(uv);
+            vec3 base = d >= 0.0
+                ? mix(vec3(0.0), vec3(1.0, 0.45, 0.0), clamp(d / 60.0, 0.0, 1.0))
+                : mix(vec3(0.0), vec3(0.0, 0.55, 1.0), clamp(-d / 60.0, 0.0, 1.0));
+            float contourDist = abs(fract(d / 10.0 - 0.5) - 0.5) * 2.0 * 10.0;
+            float contour = 1.0 - smoothstep(0.0, 1.0, contourDist);
+            dbg = mix(base, vec3(1.0), contour * 0.85);
+        }
+        fragColor = vec4(dbg, cornerAlpha);
+        return;
+    }
 
     // ========================================
     // EDGE REFRACTION

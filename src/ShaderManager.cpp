@@ -57,6 +57,7 @@ bool CShaderManager::compileGlassShader() {
     glassUniforms.distFieldSize       = glGetUniformLocation(program, "distFieldSize");
     glassUniforms.useDistanceField    = glGetUniformLocation(program, "useDistanceField");
     glassUniforms.gradientStepTexels  = glGetUniformLocation(program, "gradientStepTexels");
+    glassUniforms.debugView           = glGetUniformLocation(program, "debugView");
     glassUniforms.edgeOpacityFade     = glGetUniformLocation(program, "edgeOpacityFade");
 
     return true;

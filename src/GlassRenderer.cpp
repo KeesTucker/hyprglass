@@ -542,6 +542,7 @@ void applyGlassEffect(SP<Render::IFramebuffer> sampleFramebuffer, SP<Render::IFr
             static_cast<float>(distField->fieldSize.x),
             static_cast<float>(distField->fieldSize.y));
         glUniform1f(uniforms.gradientStepTexels, gradientStepTexels);
+        glUniform1i(uniforms.debugView, config.layersDebugView ? static_cast<int>(**config.layersDebugView) : 0);
     } else {
         glUniform1i(uniforms.useDistanceField, 0);
     }

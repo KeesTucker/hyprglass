@@ -46,6 +46,7 @@ void registerConfig(HANDLE handle) {
     addConfigValue<Config::Values::String>(handle, ConfigKeys::LAYERS_NAMESPACE_MASK_THRESHOLDS, Config::STRING{});
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::LAYERS_REFRACTION_BLEND, Config::FLOAT{GlobalDefaults::LAYERS_REFRACTION_BLEND});
     addConfigValue<Config::Values::Int>(handle, ConfigKeys::LAYERS_DISTANCE_FIELD_RESOLUTION, Config::INTEGER{GlobalDefaults::LAYERS_DISTANCE_FIELD_RESOLUTION});
+    addConfigValue<Config::Values::Int>(handle, ConfigKeys::LAYERS_DEBUG_VIEW, Config::INTEGER{0});
 
     // Windows only: focus-reactive edge/refraction scaling
     addConfigValue<Config::Values::Float>(handle, ConfigKeys::UNFOCUSED_EDGE_THICKNESS_SCALE, Config::FLOAT{GlobalDefaults::UNFOCUSED_EDGE_THICKNESS_SCALE});
@@ -171,6 +172,7 @@ void initConfigPointers(HANDLE handle, SPluginConfig& config) {
     config.layersNamespaceMaskThresholds = getStringPtr(handle, ConfigKeys::LAYERS_NAMESPACE_MASK_THRESHOLDS);
     config.layersRefractionBlend         = getStaticPtr<Hyprlang::FLOAT>(handle, ConfigKeys::LAYERS_REFRACTION_BLEND);
     config.layersDistanceFieldResolution = getStaticPtr<Hyprlang::INT>(handle, ConfigKeys::LAYERS_DISTANCE_FIELD_RESOLUTION);
+    config.layersDebugView               = getStaticPtr<Hyprlang::INT>(handle, ConfigKeys::LAYERS_DEBUG_VIEW);
 
     config.unfocusedEdgeThicknessScale = getStaticPtr<Hyprlang::FLOAT>(handle, ConfigKeys::UNFOCUSED_EDGE_THICKNESS_SCALE);
     config.unfocusedRefractionScale    = getStaticPtr<Hyprlang::FLOAT>(handle, ConfigKeys::UNFOCUSED_REFRACTION_SCALE);
